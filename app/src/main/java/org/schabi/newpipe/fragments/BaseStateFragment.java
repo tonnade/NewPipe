@@ -1,25 +1,28 @@
 package org.schabi.newpipe.fragments;
 
+import static org.schabi.newpipe.ktx.ViewUtils.animate;
+
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
 import android.widget.ProgressBar;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.StringRes;
+import androidx.fragment.app.Fragment;
+
+import com.evernote.android.state.State;
 
 import org.schabi.newpipe.BaseFragment;
 import org.schabi.newpipe.R;
-import org.schabi.newpipe.error.ErrorActivity;
 import org.schabi.newpipe.error.ErrorInfo;
 import org.schabi.newpipe.error.ErrorPanelHelper;
+import org.schabi.newpipe.error.ErrorUtil;
 import org.schabi.newpipe.util.InfoCache;
 
 import java.util.concurrent.atomic.AtomicBoolean;
-
-import icepick.State;
-
-import static org.schabi.newpipe.ktx.ViewUtils.animate;
 
 public abstract class BaseStateFragment<I> extends BaseFragment implements ViewContract<I> {
     @State
@@ -27,7 +30,9 @@ public abstract class BaseStateFragment<I> extends BaseFragment implements ViewC
     protected AtomicBoolean isLoading = new AtomicBoolean();
 
     @Nullable
-    private View emptyStateView;
+    protected View emptyStateView;
+    @Nullable
+    protected TextView emptyStateMessageView;
     @Nullable
     private ProgressBar loadingProgressBar;
 
@@ -64,6 +69,7 @@ public abstract class BaseStateFragment<I> extends BaseFragment implements ViewC
     protected void initViews(final View rootView, final Bundle savedInstanceState) {
         super.initViews(rootView, savedInstanceState);
         emptyStateView = rootView.findViewById(R.id.empty_state_view);
+        emptyStateMessageView = rootView.findViewById(R.id.empty_state_message);
         loadingProgressBar = rootView.findViewById(R.id.loading_progress_bar);
         errorPanelHelper = new ErrorPanelHelper(this, rootView, this::onRetryButtonClicked);
     }
@@ -74,6 +80,8 @@ public abstract class BaseStateFragment<I> extends BaseFragment implements ViewC
         if (errorPanelHelper != null) {
             errorPanelHelper.dispose();
         }
+        emptyStateView = null;
+        emptyStateMessageView = null;
     }
 
     protected void onRetryButtonClicked() {
@@ -126,6 +134,7 @@ public abstract class BaseStateFragment<I> extends BaseFragment implements ViewC
         hideErrorPanel();
     }
 
+    @Override
     public void showEmptyState() {
         isLoading.set(false);
         if (emptyStateView != null) {
@@ -188,6 +197,12 @@ public abstract class BaseStateFragment<I> extends BaseFragment implements ViewC
         errorPanelHelper.showTextError(errorString);
     }
 
+    protected void setEmptyStateMessage(@StringRes final int text) {
+        if (emptyStateMessageView != null) {
+            emptyStateMessageView.setText(text);
+        }
+    }
+
     public final void hideErrorPanel() {
         errorPanelHelper.hide();
         lastPanelError = null;
@@ -198,9 +213,8 @@ public abstract class BaseStateFragment<I> extends BaseFragment implements ViewC
     }
 
     /**
-     * Show a SnackBar and only call
-     * {@link ErrorActivity#reportErrorInSnackbar(androidx.fragment.app.Fragment, ErrorInfo)}
-     * IF we a find a valid view (otherwise the error screen appears).
+     * Directly calls {@link ErrorUtil#showSnackbar(Fragment, ErrorInfo)}, that shows a snackbar if
+     * a valid view can be found, otherwise creates an error report notification.
      *
      * @param errorInfo The error information
      */
@@ -208,6 +222,6 @@ public abstract class BaseStateFragment<I> extends BaseFragment implements ViewC
         if (DEBUG) {
             Log.d(TAG, "showSnackBarError() called with: errorInfo = [" + errorInfo + "]");
         }
-        ErrorActivity.reportErrorInSnackbar(this, errorInfo);
+        ErrorUtil.showSnackbar(this, errorInfo);
     }
 }

@@ -1,7 +1,6 @@
 package org.schabi.newpipe.player.mediasource;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 
 import com.google.android.exoplayer2.source.MediaSource;
 
@@ -16,7 +15,7 @@ public interface ManagedMediaSource extends MediaSource {
      *                        {@link ManagedMediaSource}, then it should be replaced.
      * @param isInterruptable specifies if this {@link ManagedMediaSource} potentially
      *                        being played.
-     * @return whether this could be replaces
+     * @return whether this could be replaced
      */
     boolean shouldBeReplacedWith(@NonNull PlayQueueItem newIdentity, boolean isInterruptable);
 
@@ -28,10 +27,4 @@ public interface ManagedMediaSource extends MediaSource {
      * @return whether this source is for the specified stream
      */
     boolean isStreamEqual(@NonNull PlayQueueItem stream);
-
-    @Nullable
-    @Override
-    default Object getTag() {
-        return this;
-    }
 }

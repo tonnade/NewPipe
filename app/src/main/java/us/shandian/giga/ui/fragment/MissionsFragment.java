@@ -17,6 +17,9 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResult;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.fragment.app.Fragment;
@@ -29,14 +32,14 @@ import com.nononsenseapps.filepicker.Utils;
 
 import org.schabi.newpipe.R;
 import org.schabi.newpipe.settings.NewPipeSettings;
+import org.schabi.newpipe.streams.io.NoFileManagerSafeGuard;
+import org.schabi.newpipe.streams.io.StoredFileHelper;
 import org.schabi.newpipe.util.FilePickerActivityHelper;
-import org.schabi.newpipe.util.ThemeHelper;
 
 import java.io.File;
 import java.io.IOException;
 
 import us.shandian.giga.get.DownloadMission;
-import us.shandian.giga.io.StoredFileHelper;
 import us.shandian.giga.service.DownloadManager;
 import us.shandian.giga.service.DownloadManagerService;
 import us.shandian.giga.service.DownloadManagerService.DownloadManagerBinder;
@@ -44,8 +47,8 @@ import us.shandian.giga.ui.adapter.MissionAdapter;
 
 public class MissionsFragment extends Fragment {
 
+    private static final String TAG = "MissionsFragment";
     private static final int SPAN_SIZE = 2;
-    private static final int REQUEST_DOWNLOAD_SAVE_AS = 0x1230;
 
     private SharedPreferences mPrefs;
     private boolean mLinear;
@@ -65,7 +68,8 @@ public class MissionsFragment extends Fragment {
     private boolean mForceUpdate;
 
     private DownloadMission unsafeMissionTarget = null;
-
+    private final ActivityResultLauncher<Intent> requestDownloadSaveAsLauncher =
+            registerForActivityResult(new StartActivityForResult(), this::requestDownloadSaveAsResult);
     private final ServiceConnection mConnection = new ServiceConnection() {
 
         @Override
@@ -182,30 +186,48 @@ public class MissionsFragment extends Fragment {
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        switch (item.getItemId()) {
-            case R.id.switch_mode:
-                mLinear = !mLinear;
-                updateList();
-                return true;
-            case R.id.clear_list:
-                AlertDialog.Builder prompt = new AlertDialog.Builder(mContext);
-                prompt.setTitle(R.string.clear_download_history);
-                prompt.setMessage(R.string.confirm_prompt);
-                // Intentionally misusing button's purpose in order to achieve good order
-                prompt.setNegativeButton(R.string.clear_download_history, (dialog, which) -> mAdapter.clearFinishedDownloads(false));
-                prompt.setPositiveButton(R.string.delete_downloaded_files, (dialog, which) -> mAdapter.clearFinishedDownloads(true));
-                prompt.setNeutralButton(R.string.cancel, null);
-                prompt.create().show();
-                return true;
-            case R.id.start_downloads:
-                mBinder.getDownloadManager().startAllMissions();
-                return true;
-            case R.id.pause_downloads:
-                mBinder.getDownloadManager().pauseAllMissions(false);
-                mAdapter.refreshMissionItems();// update items view
-            default:
-                return super.onOptionsItemSelected(item);
+        int itemId = item.getItemId();
+        if (itemId == R.id.switch_mode) {
+            mLinear = !mLinear;
+            updateList();
+            return true;
+        } else if (itemId == R.id.clear_list) {
+            showClearDownloadHistoryPrompt();
+            return true;
+        } else if (itemId == R.id.start_downloads) {
+            mBinder.getDownloadManager().startAllMissions();
+            return true;
+        } else if (itemId == R.id.pause_downloads) {
+            mBinder.getDownloadManager().pauseAllMissions(false);
+            mAdapter.refreshMissionItems();// update items view
+
+            return super.onOptionsItemSelected(item);
         }
+        return super.onOptionsItemSelected(item);
+    }
+
+    public void showClearDownloadHistoryPrompt() {
+        // ask the user whether he wants to just clear history or instead delete files on disk
+        new AlertDialog.Builder(mContext)
+                .setTitle(R.string.clear_download_history)
+                .setMessage(R.string.confirm_prompt)
+                // Intentionally misusing buttons' purpose in order to achieve good order
+                .setNegativeButton(R.string.clear_download_history, (dialog, which) ->
+                        mAdapter.clearFinishedDownloads(false))
+                .setNeutralButton(R.string.cancel, null)
+                .setPositiveButton(R.string.delete_downloaded_files, (dialog, which) ->
+                        showDeleteDownloadedFilesConfirmationPrompt())
+                .show();
+    }
+
+    public void showDeleteDownloadedFilesConfirmationPrompt() {
+        // make sure the user confirms once more before deleting files on disk
+        new AlertDialog.Builder(mContext)
+                .setTitle(R.string.delete_downloaded_files_confirm)
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton(R.string.ok, (dialog, which) ->
+                        mAdapter.clearFinishedDownloads(true))
+                .show();
     }
 
     private void updateList() {
@@ -242,27 +264,26 @@ public class MissionsFragment extends Fragment {
     private void recoverMission(@NonNull DownloadMission mission) {
         unsafeMissionTarget = mission;
 
+        final Uri initialPath;
         if (NewPipeSettings.useStorageAccessFramework(mContext)) {
-            StoredFileHelper.requestSafWithFileCreation(
-                    MissionsFragment.this,
-                    REQUEST_DOWNLOAD_SAVE_AS,
-                    mission.storage.getName(),
-                    mission.storage.getType()
-            );
-
+            initialPath = null;
         } else {
-            File initialSavePath;
-            if (DownloadManager.TAG_VIDEO.equals(mission.storage.getType()))
-                initialSavePath = NewPipeSettings.getDir(Environment.DIRECTORY_MOVIES);
-            else
+            final File initialSavePath;
+            if (DownloadManager.TAG_AUDIO.equals(mission.storage.getType())) {
                 initialSavePath = NewPipeSettings.getDir(Environment.DIRECTORY_MUSIC);
-
-            initialSavePath = new File(initialSavePath, mission.storage.getName());
-            startActivityForResult(
-                    FilePickerActivityHelper.chooseFileToSave(mContext, initialSavePath.getAbsolutePath()),
-                    REQUEST_DOWNLOAD_SAVE_AS
-            );
+            } else {
+                initialSavePath = NewPipeSettings.getDir(Environment.DIRECTORY_MOVIES);
+            }
+            initialPath = Uri.parse(initialSavePath.getAbsolutePath());
         }
+
+        NoFileManagerSafeGuard.launchSafe(
+                requestDownloadSaveAsLauncher,
+                StoredFileHelper.getNewPicker(mContext, mission.storage.getName(),
+                        mission.storage.getType(), initialPath),
+                TAG,
+                mContext
+        );
     }
 
     @Override
@@ -296,18 +317,17 @@ public class MissionsFragment extends Fragment {
         if (mBinder != null) mBinder.enableNotifications(true);
     }
 
-    @Override
-    public void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
+    private void requestDownloadSaveAsResult(final ActivityResult result) {
+        if (result.getResultCode() != Activity.RESULT_OK) {
+            return;
+        }
 
-        if (requestCode != REQUEST_DOWNLOAD_SAVE_AS || resultCode != Activity.RESULT_OK) return;
-
-        if (unsafeMissionTarget == null || data.getData() == null) {
+        if (unsafeMissionTarget == null || result.getData() == null) {
             return;
         }
 
         try {
-            Uri fileUri = data.getData();
+            Uri fileUri = result.getData().getData();
             if (fileUri.getAuthority() != null && FilePickerActivityHelper.isOwnFileUri(mContext, fileUri)) {
                 fileUri = Uri.fromFile(Utils.getFileForUri(fileUri));
             }

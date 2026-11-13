@@ -2,116 +2,125 @@ package org.schabi.newpipe.error
 
 import android.content.Context
 import android.content.Intent
-import android.util.Log
 import android.view.View
 import android.widget.Button
 import android.widget.TextView
+import androidx.annotation.StringRes
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import com.jakewharton.rxbinding4.view.clicks
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
 import io.reactivex.rxjava3.disposables.Disposable
+import java.util.concurrent.TimeUnit
 import org.schabi.newpipe.MainActivity
 import org.schabi.newpipe.R
-import org.schabi.newpipe.extractor.exceptions.AgeRestrictedContentException
-import org.schabi.newpipe.extractor.exceptions.ContentNotAvailableException
-import org.schabi.newpipe.extractor.exceptions.ContentNotSupportedException
-import org.schabi.newpipe.extractor.exceptions.GeographicRestrictionException
-import org.schabi.newpipe.extractor.exceptions.PaidContentException
-import org.schabi.newpipe.extractor.exceptions.PrivateContentException
-import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
-import org.schabi.newpipe.extractor.exceptions.SoundCloudGoPlusContentException
-import org.schabi.newpipe.extractor.exceptions.YoutubeMusicPremiumContentException
 import org.schabi.newpipe.ktx.animate
-import org.schabi.newpipe.ktx.isInterruptedCaused
-import org.schabi.newpipe.ktx.isNetworkRelated
-import java.util.concurrent.TimeUnit
+import org.schabi.newpipe.util.external_communication.ShareUtils
+import org.schabi.newpipe.util.text.setTextWithLinks
 
 class ErrorPanelHelper(
     private val fragment: Fragment,
     rootView: View,
-    onRetry: Runnable
+    onRetry: Runnable?
 ) {
     private val context: Context = rootView.context!!
+
     private val errorPanelRoot: View = rootView.findViewById(R.id.error_panel)
-    private val errorTextView: TextView = errorPanelRoot.findViewById(R.id.error_message_view)
-    private val errorButtonAction: Button = errorPanelRoot.findViewById(R.id.error_button_action)
-    private val errorButtonRetry: Button = errorPanelRoot.findViewById(R.id.error_button_retry)
+
+    // the only element that is visible by default
+    private val errorTextView: TextView =
+        errorPanelRoot.findViewById(R.id.error_message_view)
+    private val errorServiceInfoTextView: TextView =
+        errorPanelRoot.findViewById(R.id.error_message_service_info_view)
+    private val errorServiceExplanationTextView: TextView =
+        errorPanelRoot.findViewById(R.id.error_message_service_explanation_view)
+    private val errorActionButton: Button =
+        errorPanelRoot.findViewById(R.id.error_action_button)
+    private val errorRetryButton: Button =
+        errorPanelRoot.findViewById(R.id.error_retry_button)
+    private val errorOpenInBrowserButton: Button =
+        errorPanelRoot.findViewById(R.id.error_open_in_browser)
 
     private var errorDisposable: Disposable? = null
+    private var retryShouldBeShown: Boolean = (onRetry != null)
 
     init {
-        errorDisposable = errorButtonRetry.clicks()
-            .debounce(300, TimeUnit.MILLISECONDS)
-            .observeOn(AndroidSchedulers.mainThread())
-            .subscribe { onRetry.run() }
+        if (onRetry != null) {
+            errorDisposable = errorRetryButton.clicks()
+                .debounce(300, TimeUnit.MILLISECONDS)
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe { onRetry.run() }
+        }
+    }
+
+    private fun ensureDefaultVisibility() {
+        errorTextView.isVisible = true
+
+        errorServiceInfoTextView.isVisible = false
+        errorServiceExplanationTextView.isVisible = false
+        errorActionButton.isVisible = false
+        errorRetryButton.isVisible = false
+        errorOpenInBrowserButton.isVisible = false
     }
 
     fun showError(errorInfo: ErrorInfo) {
+        ensureDefaultVisibility()
+        errorTextView.setTextWithLinks(errorInfo.getMessage(context))
 
-        if (errorInfo.throwable != null && errorInfo.throwable!!.isInterruptedCaused) {
-            if (DEBUG) {
-                Log.w(TAG, "onError() isInterruptedCaused! = [$errorInfo.throwable]")
-            }
-            return
-        }
-
-        errorButtonAction.isVisible = true
-        if (errorInfo.throwable is ReCaptchaException) {
-            errorButtonAction.setText(R.string.recaptcha_solve)
-            errorButtonAction.setOnClickListener {
+        if (errorInfo.recaptchaUrl != null) {
+            showAndSetErrorButtonAction(R.string.recaptcha_solve) {
                 // Starting ReCaptcha Challenge Activity
                 val intent = Intent(context, ReCaptchaActivity::class.java)
-                intent.putExtra(
-                    ReCaptchaActivity.RECAPTCHA_URL_EXTRA,
-                    (errorInfo.throwable as ReCaptchaException).url
-                )
+                intent.putExtra(ReCaptchaActivity.RECAPTCHA_URL_EXTRA, errorInfo.recaptchaUrl)
                 fragment.startActivityForResult(intent, ReCaptchaActivity.RECAPTCHA_REQUEST)
-                errorButtonAction.setOnClickListener(null)
+                errorActionButton.setOnClickListener(null)
             }
-            errorTextView.setText(R.string.recaptcha_request_toast)
-            errorButtonRetry.isVisible = true
-        } else {
-            errorButtonAction.setText(R.string.error_snackbar_action)
-            errorButtonAction.setOnClickListener {
-                ErrorActivity.reportError(context, errorInfo)
+        } else if (errorInfo.isReportable) {
+            showAndSetErrorButtonAction(R.string.error_snackbar_action) {
+                ErrorUtil.openActivity(context, errorInfo)
             }
-
-            // hide retry button by default, then show only if not unavailable/unsupported content
-            errorButtonRetry.isVisible = false
-            errorTextView.setText(
-                when (errorInfo.throwable) {
-                    is AgeRestrictedContentException -> R.string.restricted_video_no_stream
-                    is GeographicRestrictionException -> R.string.georestricted_content
-                    is PaidContentException -> R.string.paid_content
-                    is PrivateContentException -> R.string.private_content
-                    is SoundCloudGoPlusContentException -> R.string.soundcloud_go_plus_content
-                    is YoutubeMusicPremiumContentException -> R.string.youtube_music_premium_content
-                    is ContentNotAvailableException -> R.string.content_not_available
-                    is ContentNotSupportedException -> R.string.content_not_supported
-                    else -> {
-                        // show retry button only for content which is not unavailable or unsupported
-                        errorButtonRetry.isVisible = true
-                        if (errorInfo.throwable != null && errorInfo.throwable!!.isNetworkRelated) {
-                            R.string.network_error
-                        } else {
-                            R.string.error_snackbar_message
-                        }
-                    }
-                }
-            )
         }
-        errorPanelRoot.animate(true, 300)
+
+        if (errorInfo.isRetryable) {
+            errorRetryButton.isVisible = retryShouldBeShown
+        }
+
+        if (errorInfo.openInBrowserUrl != null) {
+            errorOpenInBrowserButton.isVisible = true
+            errorOpenInBrowserButton.setOnClickListener {
+                ShareUtils.openUrlInBrowser(context, errorInfo.openInBrowserUrl)
+            }
+        }
+
+        setRootVisible()
+    }
+
+    /**
+     * Shows the errorButtonAction, sets a text into it and sets the click listener.
+     */
+    private fun showAndSetErrorButtonAction(
+        @StringRes resid: Int,
+        listener: View.OnClickListener
+    ) {
+        errorActionButton.isVisible = true
+        errorActionButton.setText(resid)
+        errorActionButton.setOnClickListener(listener)
     }
 
     fun showTextError(errorString: String) {
-        errorButtonAction.isVisible = false
-        errorButtonRetry.isVisible = false
-        errorTextView.text = errorString
+        ensureDefaultVisibility()
+
+        errorTextView.setTextWithLinks(errorString)
+
+        setRootVisible()
+    }
+
+    private fun setRootVisible() {
+        errorPanelRoot.animate(true, 300)
     }
 
     fun hide() {
-        errorButtonAction.setOnClickListener(null)
+        errorActionButton.setOnClickListener(null)
         errorPanelRoot.animate(false, 150)
     }
 
@@ -120,8 +129,8 @@ class ErrorPanelHelper(
     }
 
     fun dispose() {
-        errorButtonAction.setOnClickListener(null)
-        errorButtonRetry.setOnClickListener(null)
+        errorActionButton.setOnClickListener(null)
+        errorRetryButton.setOnClickListener(null)
         errorDisposable?.dispose()
     }
 

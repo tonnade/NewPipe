@@ -8,12 +8,12 @@ import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 
 import com.grack.nanojson.JsonObject;
-import com.grack.nanojson.JsonSink;
+import com.grack.nanojson.JsonStringWriter;
 
 import org.schabi.newpipe.R;
 import org.schabi.newpipe.database.LocalItem.LocalItemType;
-import org.schabi.newpipe.error.ErrorActivity;
 import org.schabi.newpipe.error.ErrorInfo;
+import org.schabi.newpipe.error.ErrorUtil;
 import org.schabi.newpipe.error.UserAction;
 import org.schabi.newpipe.extractor.NewPipe;
 import org.schabi.newpipe.extractor.StreamingService;
@@ -35,6 +35,10 @@ import java.util.Objects;
 
 public abstract class Tab {
     private static final String JSON_TAB_ID_KEY = "tab_id";
+
+    private static final String NO_NAME = "<no-name>";
+    private static final String NO_ID = "<no-id>";
+    private static final String NO_URL = "<no-url>";
 
     Tab() {
     }
@@ -89,6 +93,8 @@ public abstract class Tab {
                     return new ChannelTab(jsonObject);
                 case PLAYLIST:
                     return new PlaylistTab(jsonObject);
+                case FEEDGROUP:
+                    return new FeedGroupTab(jsonObject);
             }
         }
 
@@ -112,19 +118,23 @@ public abstract class Tab {
 
     @Override
     public boolean equals(final Object obj) {
-        if (obj == this) {
-            return true;
+        if (!(obj instanceof Tab)) {
+            return false;
         }
+        final Tab other = (Tab) obj;
+        return getTabId() == other.getTabId();
+    }
 
-        return obj instanceof Tab && obj.getClass() == this.getClass()
-                && ((Tab) obj).getTabId() == this.getTabId();
+    @Override
+    public int hashCode() {
+        return Objects.hashCode(getTabId());
     }
 
     /*//////////////////////////////////////////////////////////////////////////
     // JSON Handling
     //////////////////////////////////////////////////////////////////////////*/
 
-    public void writeJsonOn(final JsonSink jsonSink) {
+    public void writeJsonOn(final JsonStringWriter jsonSink) {
         jsonSink.object();
 
         jsonSink.value(JSON_TAB_ID_KEY, getTabId());
@@ -133,7 +143,7 @@ public abstract class Tab {
         jsonSink.end();
     }
 
-    protected void writeDataToJson(final JsonSink writerSink) {
+    protected void writeDataToJson(final JsonStringWriter writerSink) {
         // No-op
     }
 
@@ -154,7 +164,8 @@ public abstract class Tab {
         HISTORY(new HistoryTab()),
         KIOSK(new KioskTab()),
         CHANNEL(new ChannelTab()),
-        PLAYLIST(new PlaylistTab());
+        PLAYLIST(new PlaylistTab()),
+        FEEDGROUP(new FeedGroupTab());
 
         private final Tab tab;
 
@@ -181,7 +192,9 @@ public abstract class Tab {
 
         @Override
         public String getTabName(final Context context) {
-            return "NewPipe"; //context.getString(R.string.blank_page_summary);
+            // TODO: find a better name for the blank tab (maybe "blank_tab") or replace it with
+            //       context.getString(R.string.app_name);
+            return "NewPipe"; // context.getString(R.string.blank_page_summary);
         }
 
         @DrawableRes
@@ -238,7 +251,7 @@ public abstract class Tab {
         @DrawableRes
         @Override
         public int getTabIconRes(final Context context) {
-            return R.drawable.ic_rss_feed;
+            return R.drawable.ic_subscriptions;
         }
 
         @Override
@@ -305,7 +318,7 @@ public abstract class Tab {
         private String kioskId;
 
         private KioskTab() {
-            this(-1, "<no-id>");
+            this(-1, NO_ID);
         }
 
         public KioskTab(final int kioskServiceId, final String kioskId) {
@@ -330,7 +343,7 @@ public abstract class Tab {
         @DrawableRes
         @Override
         public int getTabIconRes(final Context context) {
-            final int kioskIcon = KioskTranslator.getKioskIcon(kioskId, context);
+            final int kioskIcon = KioskTranslator.getKioskIcon(kioskId);
 
             if (kioskIcon <= 0) {
                 throw new IllegalStateException("Kiosk ID is not valid: \"" + kioskId + "\"");
@@ -345,7 +358,7 @@ public abstract class Tab {
         }
 
         @Override
-        protected void writeDataToJson(final JsonSink writerSink) {
+        protected void writeDataToJson(final JsonStringWriter writerSink) {
             writerSink.value(JSON_KIOSK_SERVICE_ID_KEY, kioskServiceId)
                     .value(JSON_KIOSK_ID_KEY, kioskId);
         }
@@ -353,13 +366,23 @@ public abstract class Tab {
         @Override
         protected void readDataFromJson(final JsonObject jsonObject) {
             kioskServiceId = jsonObject.getInt(JSON_KIOSK_SERVICE_ID_KEY, -1);
-            kioskId = jsonObject.getString(JSON_KIOSK_ID_KEY, "<no-id>");
+            kioskId = jsonObject.getString(JSON_KIOSK_ID_KEY, NO_ID);
         }
 
         @Override
         public boolean equals(final Object obj) {
-            return super.equals(obj) && kioskServiceId == ((KioskTab) obj).kioskServiceId
-                    && Objects.equals(kioskId, ((KioskTab) obj).kioskId);
+            if (!(obj instanceof KioskTab)) {
+                return false;
+            }
+            final KioskTab other = (KioskTab) obj;
+            return super.equals(obj)
+                    && kioskServiceId == other.kioskServiceId
+                    && kioskId.equals(other.kioskId);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(getTabId(), kioskServiceId, kioskId);
         }
 
         public int getKioskServiceId() {
@@ -381,7 +404,7 @@ public abstract class Tab {
         private String channelName;
 
         private ChannelTab() {
-            this(-1, "<no-url>", "<no-name>");
+            this(-1, NO_URL, NO_NAME);
         }
 
         public ChannelTab(final int channelServiceId, final String channelUrl,
@@ -417,7 +440,7 @@ public abstract class Tab {
         }
 
         @Override
-        protected void writeDataToJson(final JsonSink writerSink) {
+        protected void writeDataToJson(final JsonStringWriter writerSink) {
             writerSink.value(JSON_CHANNEL_SERVICE_ID_KEY, channelServiceId)
                     .value(JSON_CHANNEL_URL_KEY, channelUrl)
                     .value(JSON_CHANNEL_NAME_KEY, channelName);
@@ -426,15 +449,25 @@ public abstract class Tab {
         @Override
         protected void readDataFromJson(final JsonObject jsonObject) {
             channelServiceId = jsonObject.getInt(JSON_CHANNEL_SERVICE_ID_KEY, -1);
-            channelUrl = jsonObject.getString(JSON_CHANNEL_URL_KEY, "<no-url>");
-            channelName = jsonObject.getString(JSON_CHANNEL_NAME_KEY, "<no-name>");
+            channelUrl = jsonObject.getString(JSON_CHANNEL_URL_KEY, NO_URL);
+            channelName = jsonObject.getString(JSON_CHANNEL_NAME_KEY, NO_NAME);
         }
 
         @Override
         public boolean equals(final Object obj) {
-            return super.equals(obj) && channelServiceId == ((ChannelTab) obj).channelServiceId
-                    && Objects.equals(channelUrl, ((ChannelTab) obj).channelUrl)
-                    && Objects.equals(channelName, ((ChannelTab) obj).channelName);
+            if (!(obj instanceof ChannelTab)) {
+                return false;
+            }
+            final ChannelTab other = (ChannelTab) obj;
+            return super.equals(obj)
+                    && channelServiceId == other.channelServiceId
+                    && channelUrl.equals(other.channelUrl)
+                    && channelName.equals(other.channelName);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(getTabId(), channelServiceId, channelUrl, channelName);
         }
 
         public int getChannelServiceId() {
@@ -466,7 +499,7 @@ public abstract class Tab {
         @DrawableRes
         @Override
         public int getTabIconRes(final Context context) {
-            return KioskTranslator.getKioskIcon(getDefaultKioskId(context), context);
+            return KioskTranslator.getKioskIcon(getDefaultKioskId(context));
         }
 
         @Override
@@ -482,7 +515,7 @@ public abstract class Tab {
                 final StreamingService service = NewPipe.getService(kioskServiceId);
                 kioskId = service.getKioskList().getDefaultKioskId();
             } catch (final ExtractionException e) {
-                ErrorActivity.reportErrorInSnackbar(context, new ErrorInfo(e,
+                ErrorUtil.showSnackbar(context, new ErrorInfo(e,
                         UserAction.REQUESTED_KIOSK, "Loading default kiosk for selected service"));
             }
             return kioskId;
@@ -503,7 +536,7 @@ public abstract class Tab {
         private LocalItemType playlistType;
 
         private PlaylistTab() {
-            this(-1, "<no-name>");
+            this(-1, NO_NAME);
         }
 
         public PlaylistTab(final long playlistId, final String playlistName) {
@@ -511,7 +544,7 @@ public abstract class Tab {
             this.playlistId = playlistId;
             this.playlistType = LocalItemType.PLAYLIST_LOCAL_ITEM;
             this.playlistServiceId = -1;
-            this.playlistUrl = "<no-url>";
+            this.playlistUrl = NO_URL;
         }
 
         public PlaylistTab(final int playlistServiceId, final String playlistUrl,
@@ -554,7 +587,7 @@ public abstract class Tab {
         }
 
         @Override
-        protected void writeDataToJson(final JsonSink writerSink) {
+        protected void writeDataToJson(final JsonStringWriter writerSink) {
             writerSink.value(JSON_PLAYLIST_SERVICE_ID_KEY, playlistServiceId)
                     .value(JSON_PLAYLIST_URL_KEY, playlistUrl)
                     .value(JSON_PLAYLIST_NAME_KEY, playlistName)
@@ -565,8 +598,8 @@ public abstract class Tab {
         @Override
         protected void readDataFromJson(final JsonObject jsonObject) {
             playlistServiceId = jsonObject.getInt(JSON_PLAYLIST_SERVICE_ID_KEY, -1);
-            playlistUrl = jsonObject.getString(JSON_PLAYLIST_URL_KEY, "<no-url>");
-            playlistName = jsonObject.getString(JSON_PLAYLIST_NAME_KEY, "<no-name>");
+            playlistUrl = jsonObject.getString(JSON_PLAYLIST_URL_KEY, NO_URL);
+            playlistName = jsonObject.getString(JSON_PLAYLIST_NAME_KEY, NO_NAME);
             playlistId = jsonObject.getInt(JSON_PLAYLIST_ID_KEY, -1);
             playlistType = LocalItemType.valueOf(
                     jsonObject.getString(JSON_PLAYLIST_TYPE_KEY,
@@ -576,15 +609,30 @@ public abstract class Tab {
 
         @Override
         public boolean equals(final Object obj) {
-            if (!(super.equals(obj)
-                    && Objects.equals(playlistType, ((PlaylistTab) obj).playlistType)
-                    && Objects.equals(playlistName, ((PlaylistTab) obj).playlistName))) {
-                return false; // base objects are different
+            if (!(obj instanceof PlaylistTab)) {
+                return false;
             }
 
-            return (playlistId == ((PlaylistTab) obj).playlistId)                     // local
-                    || (playlistServiceId == ((PlaylistTab) obj).playlistServiceId    // remote
-                    && Objects.equals(playlistUrl, ((PlaylistTab) obj).playlistUrl));
+            final PlaylistTab other = (PlaylistTab) obj;
+
+            return super.equals(obj)
+                    && playlistServiceId == other.playlistServiceId // Remote
+                    && playlistId == other.playlistId // Local
+                    && playlistUrl.equals(other.playlistUrl)
+                    && playlistName.equals(other.playlistName)
+                    && playlistType == other.playlistType;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(
+                    getTabId(),
+                    playlistServiceId,
+                    playlistId,
+                    playlistUrl,
+                    playlistName,
+                    playlistType
+            );
         }
 
         public int getPlaylistServiceId() {
@@ -605,6 +653,95 @@ public abstract class Tab {
 
         public LocalItemType getPlaylistType() {
             return playlistType;
+        }
+    }
+    public static class FeedGroupTab extends Tab {
+        public static final int ID = 9;
+        private static final String JSON_FEED_GROUP_ID_KEY = "feed_group_id";
+        private static final String JSON_FEED_GROUP_NAME_KEY = "feed_group_name";
+        private static final String JSON_FEED_GROUP_ICON_KEY = "feed_group_icon";
+        private Long feedGroupId;
+        private String feedGroupName;
+        private int iconId;
+
+        private FeedGroupTab() {
+            this((long) -1, NO_NAME, R.drawable.ic_asterisk);
+        }
+
+        public FeedGroupTab(final Long feedGroupId, final String feedGroupName,
+                               final int iconId) {
+            this.feedGroupId = feedGroupId;
+            this.feedGroupName = feedGroupName;
+            this.iconId = iconId;
+
+        }
+
+        public FeedGroupTab(final JsonObject jsonObject) {
+            super(jsonObject);
+        }
+
+        @Override
+        public int getTabId() {
+            return ID;
+        }
+
+        @Override
+        public String getTabName(final Context context) {
+            return context.getString(R.string.fragment_feed_title);
+        }
+
+        @DrawableRes
+        @Override
+        public int getTabIconRes(final Context context) {
+            return this.iconId;
+        }
+
+        @Override
+        public FeedFragment getFragment(final Context context) {
+            return FeedFragment.newInstance(feedGroupId, feedGroupName);
+        }
+
+        @Override
+        protected void writeDataToJson(final JsonStringWriter writerSink) {
+            writerSink.value(JSON_FEED_GROUP_ID_KEY, feedGroupId)
+                    .value(JSON_FEED_GROUP_NAME_KEY, feedGroupName)
+                    .value(JSON_FEED_GROUP_ICON_KEY, iconId);
+        }
+
+        @Override
+        protected void readDataFromJson(final JsonObject jsonObject) {
+            feedGroupId = jsonObject.getLong(JSON_FEED_GROUP_ID_KEY, -1);
+            feedGroupName = jsonObject.getString(JSON_FEED_GROUP_NAME_KEY, NO_NAME);
+            iconId = jsonObject.getInt(JSON_FEED_GROUP_ICON_KEY, R.drawable.ic_asterisk);
+        }
+
+        @Override
+        public boolean equals(final Object obj) {
+            if (!(obj instanceof FeedGroupTab)) {
+                return false;
+            }
+            final FeedGroupTab other = (FeedGroupTab) obj;
+            return super.equals(obj)
+                    && feedGroupId.equals(other.feedGroupId)
+                    && feedGroupName.equals(other.feedGroupName)
+                    && iconId == other.iconId;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(getTabId(), feedGroupId, feedGroupName, iconId);
+        }
+
+        public Long getFeedGroupId() {
+            return feedGroupId;
+        }
+
+        public String getFeedGroupName() {
+            return feedGroupName;
+        }
+
+        public int getIconId() {
+            return iconId;
         }
     }
 }

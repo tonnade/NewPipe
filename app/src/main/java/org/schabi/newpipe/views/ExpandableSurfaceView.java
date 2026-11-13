@@ -1,7 +1,6 @@
 package org.schabi.newpipe.views;
 
 import android.content.Context;
-import android.os.Build;
 import android.util.AttributeSet;
 import android.view.SurfaceView;
 
@@ -36,19 +35,16 @@ public class ExpandableSurfaceView extends SurfaceView {
                 && resizeMode != RESIZE_MODE_FIT
                 && verticalVideo ? maxHeight : baseHeight;
 
-        if (height == 0) {
+        if (width == 0 || height == 0) {
             return;
         }
 
         final float viewAspectRatio = width / ((float) height);
-        final float aspectDeformation = videoAspectRatio / viewAspectRatio - 1;
+        final float aspectDeformation = (videoAspectRatio / viewAspectRatio) - 1;
         scaleX = 1.0f;
         scaleY = 1.0f;
 
-        if (resizeMode == RESIZE_MODE_FIT
-                // KitKat doesn't work well when a view has a scale like needed for ZOOM
-                || (resizeMode == RESIZE_MODE_ZOOM
-                && Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP)) {
+        if (resizeMode == RESIZE_MODE_FIT) {
             if (aspectDeformation > 0) {
                 height = (int) (width / videoAspectRatio);
             } else {
@@ -104,7 +100,7 @@ public class ExpandableSurfaceView extends SurfaceView {
     }
 
     public void setAspectRatio(final float aspectRatio) {
-        if (videoAspectRatio == aspectRatio) {
+        if (videoAspectRatio == aspectRatio || aspectRatio == 0 || !Float.isFinite(aspectRatio)) {
             return;
         }
 

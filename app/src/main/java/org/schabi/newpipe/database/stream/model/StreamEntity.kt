@@ -1,10 +1,12 @@
 package org.schabi.newpipe.database.stream.model
 
-import androidx.room.ColumnInfo
-import androidx.room.Entity
-import androidx.room.Ignore
-import androidx.room.Index
-import androidx.room.PrimaryKey
+import androidx.room3.ColumnInfo
+import androidx.room3.Entity
+import androidx.room3.Ignore
+import androidx.room3.Index
+import androidx.room3.PrimaryKey
+import java.io.Serializable
+import java.time.OffsetDateTime
 import org.schabi.newpipe.database.stream.model.StreamEntity.Companion.STREAM_SERVICE_ID
 import org.schabi.newpipe.database.stream.model.StreamEntity.Companion.STREAM_TABLE
 import org.schabi.newpipe.database.stream.model.StreamEntity.Companion.STREAM_URL
@@ -13,8 +15,7 @@ import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import org.schabi.newpipe.extractor.stream.StreamType
 import org.schabi.newpipe.player.playqueue.PlayQueueItem
-import java.io.Serializable
-import java.time.OffsetDateTime
+import org.schabi.newpipe.util.image.ImageStrategy
 
 @Entity(
     tableName = STREAM_TABLE,
@@ -45,6 +46,9 @@ data class StreamEntity(
     @ColumnInfo(name = STREAM_UPLOADER)
     var uploader: String,
 
+    @ColumnInfo(name = STREAM_UPLOADER_URL)
+    var uploaderUrl: String? = null,
+
     @ColumnInfo(name = STREAM_THUMBNAIL_URL)
     var thumbnailUrl: String? = null,
 
@@ -64,7 +68,8 @@ data class StreamEntity(
     constructor(item: StreamInfoItem) : this(
         serviceId = item.serviceId, url = item.url, title = item.name,
         streamType = item.streamType, duration = item.duration, uploader = item.uploaderName,
-        thumbnailUrl = item.thumbnailUrl, viewCount = item.viewCount,
+        uploaderUrl = item.uploaderUrl,
+        thumbnailUrl = ImageStrategy.imageListToDbUrl(item.thumbnails), viewCount = item.viewCount,
         textualUploadDate = item.textualUploadDate, uploadDate = item.uploadDate?.offsetDateTime(),
         isUploadDateApproximation = item.uploadDate?.isApproximation
     )
@@ -73,23 +78,30 @@ data class StreamEntity(
     constructor(info: StreamInfo) : this(
         serviceId = info.serviceId, url = info.url, title = info.name,
         streamType = info.streamType, duration = info.duration, uploader = info.uploaderName,
-        thumbnailUrl = info.thumbnailUrl, viewCount = info.viewCount,
+        uploaderUrl = info.uploaderUrl,
+        thumbnailUrl = ImageStrategy.imageListToDbUrl(info.thumbnails), viewCount = info.viewCount,
         textualUploadDate = info.textualUploadDate, uploadDate = info.uploadDate?.offsetDateTime(),
         isUploadDateApproximation = info.uploadDate?.isApproximation
     )
 
     @Ignore
     constructor(item: PlayQueueItem) : this(
-        serviceId = item.serviceId, url = item.url, title = item.title,
-        streamType = item.streamType, duration = item.duration, uploader = item.uploader,
-        thumbnailUrl = item.thumbnailUrl
+        serviceId = item.serviceId,
+        url = item.url,
+        title = item.title,
+        streamType = item.streamType,
+        duration = item.duration,
+        uploader = item.uploader,
+        uploaderUrl = item.uploaderUrl,
+        thumbnailUrl = ImageStrategy.imageListToDbUrl(item.thumbnails)
     )
 
     fun toStreamInfoItem(): StreamInfoItem {
         val item = StreamInfoItem(serviceId, url, title, streamType)
         item.duration = duration
         item.uploaderName = uploader
-        item.thumbnailUrl = thumbnailUrl
+        item.uploaderUrl = uploaderUrl
+        item.thumbnails = ImageStrategy.dbUrlToImageList(thumbnailUrl)
 
         if (viewCount != null) item.viewCount = viewCount as Long
         item.textualUploadDate = textualUploadDate
@@ -109,6 +121,7 @@ data class StreamEntity(
         const val STREAM_TYPE = "stream_type"
         const val STREAM_DURATION = "duration"
         const val STREAM_UPLOADER = "uploader"
+        const val STREAM_UPLOADER_URL = "uploader_url"
         const val STREAM_THUMBNAIL_URL = "thumbnail_url"
 
         const val STREAM_VIEWS = "view_count"

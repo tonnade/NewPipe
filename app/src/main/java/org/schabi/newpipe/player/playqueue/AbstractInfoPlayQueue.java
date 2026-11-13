@@ -3,6 +3,7 @@ package org.schabi.newpipe.player.playqueue;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import org.schabi.newpipe.extractor.InfoItem;
 import org.schabi.newpipe.extractor.ListExtractor;
@@ -10,29 +11,43 @@ import org.schabi.newpipe.extractor.ListInfo;
 import org.schabi.newpipe.extractor.Page;
 import org.schabi.newpipe.extractor.stream.StreamInfoItem;
 
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import io.reactivex.rxjava3.core.SingleObserver;
 import io.reactivex.rxjava3.disposables.Disposable;
 
-abstract class AbstractInfoPlayQueue<T extends ListInfo, U extends InfoItem> extends PlayQueue {
+abstract class AbstractInfoPlayQueue<T extends ListInfo<? extends InfoItem>>
+        extends PlayQueue {
     boolean isInitial;
     private boolean isComplete;
 
     final int serviceId;
     final String baseUrl;
+    @Nullable
     Page nextPage;
 
     private transient Disposable fetchReactor;
 
-    AbstractInfoPlayQueue(final U item) {
-        this(item.getServiceId(), item.getUrl(), null, Collections.emptyList(), 0);
+    protected AbstractInfoPlayQueue(final T info) {
+        this(info, 0);
     }
 
-    AbstractInfoPlayQueue(final int serviceId, final String url, final Page nextPage,
-                          final List<StreamInfoItem> streams, final int index) {
+    protected AbstractInfoPlayQueue(final T info, final int index) {
+        this(info.getServiceId(), info.getUrl(), info.getNextPage(),
+                info.getRelatedItems()
+                        .stream()
+                        .filter(StreamInfoItem.class::isInstance)
+                        .map(StreamInfoItem.class::cast)
+                        .collect(Collectors.toList()),
+                index);
+    }
+
+    protected AbstractInfoPlayQueue(final int serviceId,
+                                    final String url,
+                                    final Page nextPage,
+                                    final List<StreamInfoItem> streams,
+                                    final int index) {
         super(index, extractListItems(streams));
 
         this.baseUrl = url;
@@ -51,7 +66,7 @@ abstract class AbstractInfoPlayQueue<T extends ListInfo, U extends InfoItem> ext
     }
 
     SingleObserver<T> getHeadListObserver() {
-        return new SingleObserver<T>() {
+        return new SingleObserver<>() {
             @Override
             public void onSubscribe(@NonNull final Disposable d) {
                 if (isComplete || !isInitial || (fetchReactor != null
@@ -70,7 +85,11 @@ abstract class AbstractInfoPlayQueue<T extends ListInfo, U extends InfoItem> ext
                 }
                 nextPage = result.getNextPage();
 
-                append(extractListItems(result.getRelatedItems()));
+                append(extractListItems(result.getRelatedItems()
+                        .stream()
+                        .filter(StreamInfoItem.class::isInstance)
+                        .map(StreamInfoItem.class::cast)
+                        .collect(Collectors.toList())));
 
                 fetchReactor.dispose();
                 fetchReactor = null;
@@ -80,13 +99,13 @@ abstract class AbstractInfoPlayQueue<T extends ListInfo, U extends InfoItem> ext
             public void onError(@NonNull final Throwable e) {
                 Log.e(getTag(), "Error fetching more playlist, marking playlist as complete.", e);
                 isComplete = true;
-                append(); // Notify change
+                notifyChange();
             }
         };
     }
 
-    SingleObserver<ListExtractor.InfoItemsPage> getNextPageObserver() {
-        return new SingleObserver<ListExtractor.InfoItemsPage>() {
+    SingleObserver<ListExtractor.InfoItemsPage<? extends InfoItem>> getNextPageObserver() {
+        return new SingleObserver<>() {
             @Override
             public void onSubscribe(@NonNull final Disposable d) {
                 if (isComplete || isInitial || (fetchReactor != null
@@ -98,13 +117,18 @@ abstract class AbstractInfoPlayQueue<T extends ListInfo, U extends InfoItem> ext
             }
 
             @Override
-            public void onSuccess(@NonNull final ListExtractor.InfoItemsPage result) {
+            public void onSuccess(
+                    @NonNull final ListExtractor.InfoItemsPage<? extends InfoItem> result) {
                 if (!result.hasNextPage()) {
                     isComplete = true;
                 }
                 nextPage = result.getNextPage();
 
-                append(extractListItems(result.getItems()));
+                append(extractListItems(result.getItems()
+                        .stream()
+                        .filter(StreamInfoItem.class::isInstance)
+                        .map(StreamInfoItem.class::cast)
+                        .collect(Collectors.toList())));
 
                 fetchReactor.dispose();
                 fetchReactor = null;
@@ -114,7 +138,7 @@ abstract class AbstractInfoPlayQueue<T extends ListInfo, U extends InfoItem> ext
             public void onError(@NonNull final Throwable e) {
                 Log.e(getTag(), "Error fetching more playlist, marking playlist as complete.", e);
                 isComplete = true;
-                append(); // Notify change
+                notifyChange();
             }
         };
     }
@@ -129,12 +153,6 @@ abstract class AbstractInfoPlayQueue<T extends ListInfo, U extends InfoItem> ext
     }
 
     private static List<PlayQueueItem> extractListItems(final List<StreamInfoItem> infoItems) {
-        final List<PlayQueueItem> result = new ArrayList<>();
-        for (final InfoItem stream : infoItems) {
-            if (stream instanceof StreamInfoItem) {
-                result.add(new PlayQueueItem((StreamInfoItem) stream));
-            }
-        }
-        return result;
+        return infoItems.stream().map(PlayQueueItem::new).collect(Collectors.toList());
     }
 }

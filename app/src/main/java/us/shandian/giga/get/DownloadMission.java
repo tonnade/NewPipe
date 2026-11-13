@@ -1,6 +1,5 @@
 package us.shandian.giga.get;
 
-import android.os.Build;
 import android.os.Handler;
 import android.system.ErrnoException;
 import android.system.OsConstants;
@@ -26,7 +25,7 @@ import java.util.Objects;
 
 import javax.net.ssl.SSLException;
 
-import us.shandian.giga.io.StoredFileHelper;
+import org.schabi.newpipe.streams.io.StoredFileHelper;
 import us.shandian.giga.postprocessing.Postprocessing;
 import us.shandian.giga.service.DownloadManagerService;
 import us.shandian.giga.util.Utility;
@@ -316,16 +315,14 @@ public class DownloadMission extends Mission {
 
     public synchronized void notifyError(int code, Exception err) {
         Log.e(TAG, "notifyError() code = " + code, err);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            if (err != null && err.getCause() instanceof ErrnoException) {
-                int errno = ((ErrnoException) err.getCause()).errno;
-                if (errno == OsConstants.ENOSPC) {
-                    code = ERROR_INSUFFICIENT_STORAGE;
-                    err = null;
-                } else if (errno == OsConstants.EACCES) {
-                    code = ERROR_PERMISSION_DENIED;
-                    err = null;
-                }
+        if (err != null && err.getCause() instanceof ErrnoException) {
+            int errno = ((ErrnoException) err.getCause()).errno;
+            if (errno == OsConstants.ENOSPC) {
+                code = ERROR_INSUFFICIENT_STORAGE;
+                err = null;
+            } else if (errno == OsConstants.EACCES) {
+                code = ERROR_PERMISSION_DENIED;
+                err = null;
             }
         }
 
@@ -664,7 +661,8 @@ public class DownloadMission extends Mission {
      * @return {@code true}, if storage is invalid and cannot be used
      */
     public boolean hasInvalidStorage() {
-        return errCode == ERROR_PROGRESS_LOST || storage == null || storage.isInvalid() || !storage.existsAsFile();
+        // Don't consider ERROR_PROGRESS_LOST as invalid storage - it can be recovered
+        return storage == null || !storage.existsAsFile();
     }
 
     /**

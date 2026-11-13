@@ -1,7 +1,6 @@
 package org.schabi.newpipe.local.subscription.dialog
 
 import android.app.Dialog
-import android.content.res.ColorStateList
 import android.os.Bundle
 import android.os.Parcelable
 import android.view.LayoutInflater
@@ -13,19 +12,18 @@ import androidx.core.content.getSystemService
 import androidx.core.os.bundleOf
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
-import androidx.core.widget.ImageViewCompat
 import androidx.core.widget.doOnTextChanged
 import androidx.fragment.app.DialogFragment
 import androidx.lifecycle.Observer
 import androidx.lifecycle.ViewModelProvider
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.xwray.groupie.GroupAdapter
-import com.xwray.groupie.GroupieViewHolder
+import com.evernote.android.state.State
+import com.livefront.bridge.Bridge
+import com.xwray.groupie.GroupieAdapter
 import com.xwray.groupie.OnItemClickListener
 import com.xwray.groupie.Section
-import icepick.Icepick
-import icepick.State
+import java.io.Serializable
 import org.schabi.newpipe.R
 import org.schabi.newpipe.database.feed.model.FeedGroupEntity
 import org.schabi.newpipe.databinding.DialogFeedGroupCreateBinding
@@ -38,12 +36,11 @@ import org.schabi.newpipe.local.subscription.dialog.FeedGroupDialog.ScreenState.
 import org.schabi.newpipe.local.subscription.dialog.FeedGroupDialog.ScreenState.SubscriptionsPickerScreen
 import org.schabi.newpipe.local.subscription.dialog.FeedGroupDialogViewModel.DialogEvent.ProcessingEvent
 import org.schabi.newpipe.local.subscription.dialog.FeedGroupDialogViewModel.DialogEvent.SuccessEvent
-import org.schabi.newpipe.local.subscription.item.EmptyPlaceholderItem
+import org.schabi.newpipe.local.subscription.item.ImportSubscriptionsHintPlaceholderItem
 import org.schabi.newpipe.local.subscription.item.PickerIconItem
 import org.schabi.newpipe.local.subscription.item.PickerSubscriptionItem
 import org.schabi.newpipe.util.DeviceUtils
 import org.schabi.newpipe.util.ThemeHelper
-import java.io.Serializable
 
 class FeedGroupDialog : DialogFragment(), BackPressable {
     private var _feedGroupCreateBinding: DialogFeedGroupCreateBinding? = null
@@ -58,30 +55,55 @@ class FeedGroupDialog : DialogFragment(), BackPressable {
     private var groupSortOrder: Long = -1
 
     sealed class ScreenState : Serializable {
-        object InitialScreen : ScreenState()
-        object IconPickerScreen : ScreenState()
-        object SubscriptionsPickerScreen : ScreenState()
-        object DeleteScreen : ScreenState()
+        data object InitialScreen : ScreenState()
+        data object IconPickerScreen : ScreenState()
+        data object SubscriptionsPickerScreen : ScreenState()
+        data object DeleteScreen : ScreenState()
     }
 
-    @State @JvmField var selectedIcon: FeedGroupIcon? = null
-    @State @JvmField var selectedSubscriptions: HashSet<Long> = HashSet()
-    @State @JvmField var wasSubscriptionSelectionChanged: Boolean = false
-    @State @JvmField var currentScreen: ScreenState = InitialScreen
+    @State
+    @JvmField
+    var selectedIcon: FeedGroupIcon? = null
 
-    @State @JvmField var subscriptionsListState: Parcelable? = null
-    @State @JvmField var iconsListState: Parcelable? = null
-    @State @JvmField var wasSearchSubscriptionsVisible = false
-    @State @JvmField var subscriptionsCurrentSearchQuery = ""
-    @State @JvmField var subscriptionsShowOnlyUngrouped = false
+    @State
+    @JvmField
+    var selectedSubscriptions: HashSet<Long> = HashSet()
+
+    @State
+    @JvmField
+    var wasSubscriptionSelectionChanged: Boolean = false
+
+    @State
+    @JvmField
+    var currentScreen: ScreenState = InitialScreen
+
+    @State
+    @JvmField
+    var subscriptionsListState: Parcelable? = null
+
+    @State
+    @JvmField
+    var iconsListState: Parcelable? = null
+
+    @State
+    @JvmField
+    var wasSearchSubscriptionsVisible = false
+
+    @State
+    @JvmField
+    var subscriptionsCurrentSearchQuery = ""
+
+    @State
+    @JvmField
+    var subscriptionsShowOnlyUngrouped = false
 
     private val subscriptionMainSection = Section()
     private val subscriptionEmptyFooter = Section()
-    private lateinit var subscriptionGroupAdapter: GroupAdapter<GroupieViewHolder>
+    private lateinit var subscriptionGroupAdapter: GroupieAdapter
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Icepick.restoreInstanceState(this, savedInstanceState)
+        Bridge.restoreInstanceState(this, savedInstanceState)
 
         setStyle(STYLE_NO_TITLE, ThemeHelper.getMinWidthDialogTheme(requireContext()))
         groupId = arguments?.getLong(KEY_GROUP_ID, NO_GROUP_SELECTED) ?: NO_GROUP_SELECTED
@@ -117,7 +139,7 @@ class FeedGroupDialog : DialogFragment(), BackPressable {
         iconsListState = feedGroupCreateBinding.iconSelector.layoutManager?.onSaveInstanceState()
         subscriptionsListState = feedGroupCreateBinding.subscriptionsSelectorList.layoutManager?.onSaveInstanceState()
 
-        Icepick.saveInstanceState(this, outState)
+        Bridge.saveInstanceState(this, outState)
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -125,40 +147,28 @@ class FeedGroupDialog : DialogFragment(), BackPressable {
         _feedGroupCreateBinding = DialogFeedGroupCreateBinding.bind(view)
         _searchLayoutBinding = feedGroupCreateBinding.subscriptionsHeaderSearchContainer
 
-        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.LOLLIPOP) {
-            // KitKat doesn't apply container's theme to <include> content
-            val contrastColor = ColorStateList.valueOf(resources.getColor(R.color.contrastColor))
-            searchLayoutBinding.toolbarSearchEditText.setTextColor(contrastColor)
-            searchLayoutBinding.toolbarSearchEditText.setHintTextColor(contrastColor.withAlpha(128))
-            ImageViewCompat.setImageTintList(searchLayoutBinding.toolbarSearchClearIcon, contrastColor)
-        }
-
         viewModel = ViewModelProvider(
             this,
-            FeedGroupDialogViewModel.Factory(
+            FeedGroupDialogViewModel.getFactory(
                 requireContext(),
-                groupId, subscriptionsCurrentSearchQuery, subscriptionsShowOnlyUngrouped
+                groupId,
+                subscriptionsCurrentSearchQuery,
+                subscriptionsShowOnlyUngrouped
             )
-        ).get(FeedGroupDialogViewModel::class.java)
+        )[FeedGroupDialogViewModel::class.java]
 
         viewModel.groupLiveData.observe(viewLifecycleOwner, Observer(::handleGroup))
-        viewModel.subscriptionsLiveData.observe(
-            viewLifecycleOwner,
-            Observer {
-                setupSubscriptionPicker(it.first, it.second)
+        viewModel.subscriptionsLiveData.observe(viewLifecycleOwner) {
+            setupSubscriptionPicker(it.first, it.second)
+        }
+        viewModel.dialogEventLiveData.observe(viewLifecycleOwner) {
+            when (it) {
+                ProcessingEvent -> disableInput()
+                SuccessEvent -> dismiss()
             }
-        )
-        viewModel.dialogEventLiveData.observe(
-            viewLifecycleOwner,
-            Observer {
-                when (it) {
-                    ProcessingEvent -> disableInput()
-                    SuccessEvent -> dismiss()
-                }
-            }
-        )
+        }
 
-        subscriptionGroupAdapter = GroupAdapter<GroupieViewHolder>().apply {
+        subscriptionGroupAdapter = GroupieAdapter().apply {
             add(subscriptionMainSection)
             add(subscriptionEmptyFooter)
             spanCount = 4
@@ -168,8 +178,10 @@ class FeedGroupDialog : DialogFragment(), BackPressable {
             itemAnimator = null
             adapter = subscriptionGroupAdapter
             layoutManager = GridLayoutManager(
-                requireContext(), subscriptionGroupAdapter.spanCount,
-                RecyclerView.VERTICAL, false
+                requireContext(),
+                subscriptionGroupAdapter.spanCount,
+                RecyclerView.VERTICAL,
+                false
             ).apply {
                 spanSizeLookup = subscriptionGroupAdapter.spanSizeLookup
             }
@@ -315,7 +327,7 @@ class FeedGroupDialog : DialogFragment(), BackPressable {
         groupIcon = feedGroupEntity?.icon
         groupSortOrder = feedGroupEntity?.sortOrder ?: -1
 
-        val feedGroupIcon = if (selectedIcon == null) icon else selectedIcon!!
+        val feedGroupIcon = selectedIcon ?: icon
         feedGroupCreateBinding.iconPreview.setImageResource(feedGroupIcon.getDrawableRes())
 
         if (feedGroupCreateBinding.groupNameInput.text.isNullOrBlank()) {
@@ -353,7 +365,7 @@ class FeedGroupDialog : DialogFragment(), BackPressable {
 
         if (subscriptions.isEmpty()) {
             subscriptionEmptyFooter.clear()
-            subscriptionEmptyFooter.add(EmptyPlaceholderItem())
+            subscriptionEmptyFooter.add(ImportSubscriptionsHintPlaceholderItem())
         } else {
             subscriptionEmptyFooter.clear()
         }
@@ -377,15 +389,16 @@ class FeedGroupDialog : DialogFragment(), BackPressable {
         val selectedCount = this.selectedSubscriptions.size
         val selectedCountText = resources.getQuantityString(
             R.plurals.feed_group_dialog_selection_count,
-            selectedCount, selectedCount
+            selectedCount,
+            selectedCount
         )
         feedGroupCreateBinding.selectedSubscriptionCountView.text = selectedCountText
         feedGroupCreateBinding.subscriptionsHeaderInfo.text = selectedCountText
     }
 
     private fun setupIconPicker() {
-        val groupAdapter = GroupAdapter<GroupieViewHolder>()
-        groupAdapter.addAll(FeedGroupIcon.values().map { PickerIconItem(requireContext(), it) })
+        val groupAdapter = GroupieAdapter()
+        groupAdapter.addAll(FeedGroupIcon.entries.map { PickerIconItem(it) })
 
         feedGroupCreateBinding.iconSelector.apply {
             layoutManager = GridLayoutManager(requireContext(), 7, RecyclerView.VERTICAL, false)
@@ -436,7 +449,7 @@ class FeedGroupDialog : DialogFragment(), BackPressable {
         feedGroupCreateBinding.confirmButton.setText(
             when {
                 currentScreen == InitialScreen && groupId == NO_GROUP_SELECTED -> R.string.create
-                else -> android.R.string.ok
+                else -> R.string.ok
             }
         )
 
@@ -493,7 +506,7 @@ class FeedGroupDialog : DialogFragment(), BackPressable {
     private fun hideKeyboardSearch() {
         inputMethodManager.hideSoftInputFromWindow(
             searchLayoutBinding.toolbarSearchEditText.windowToken,
-            InputMethodManager.RESULT_UNCHANGED_SHOWN
+            InputMethodManager.HIDE_NOT_ALWAYS
         )
         searchLayoutBinding.toolbarSearchEditText.clearFocus()
     }
@@ -510,7 +523,7 @@ class FeedGroupDialog : DialogFragment(), BackPressable {
     private fun hideKeyboard() {
         inputMethodManager.hideSoftInputFromWindow(
             feedGroupCreateBinding.groupNameInput.windowToken,
-            InputMethodManager.RESULT_UNCHANGED_SHOWN
+            InputMethodManager.HIDE_NOT_ALWAYS
         )
         feedGroupCreateBinding.groupNameInput.clearFocus()
     }

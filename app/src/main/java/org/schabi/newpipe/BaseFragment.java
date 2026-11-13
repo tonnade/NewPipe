@@ -10,21 +10,17 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
 
-import com.nostra13.universalimageloader.core.ImageLoader;
+import com.evernote.android.state.State;
+import com.livefront.bridge.Bridge;
 
-import icepick.Icepick;
-import icepick.State;
-import leakcanary.AppWatcher;
 
 public abstract class BaseFragment extends Fragment {
-    public static final ImageLoader IMAGE_LOADER = ImageLoader.getInstance();
     protected final String TAG = getClass().getSimpleName() + "@" + Integer.toHexString(hashCode());
-    protected final boolean DEBUG = MainActivity.DEBUG;
+    protected static final boolean DEBUG = MainActivity.DEBUG;
     protected AppCompatActivity activity;
     //These values are used for controlling fragments when they are part of the frontpage
     @State
     protected boolean useAsFrontPage = false;
-    private boolean mIsVisibleToUser = false;
 
     public void useAsFrontPage(final boolean value) {
         useAsFrontPage = value;
@@ -53,7 +49,7 @@ public abstract class BaseFragment extends Fragment {
                     + "savedInstanceState = [" + savedInstanceState + "]");
         }
         super.onCreate(savedInstanceState);
-        Icepick.restoreInstanceState(this, savedInstanceState);
+        Bridge.restoreInstanceState(this, savedInstanceState);
         if (savedInstanceState != null) {
             onRestoreInstanceState(savedInstanceState);
         }
@@ -75,32 +71,39 @@ public abstract class BaseFragment extends Fragment {
     @Override
     public void onSaveInstanceState(@NonNull final Bundle outState) {
         super.onSaveInstanceState(outState);
-        Icepick.saveInstanceState(this, outState);
+        Bridge.saveInstanceState(this, outState);
     }
 
     protected void onRestoreInstanceState(@NonNull final Bundle savedInstanceState) {
-    }
-
-    @Override
-    public void onDestroy() {
-        super.onDestroy();
-
-        AppWatcher.INSTANCE.getObjectWatcher().watch(this);
-    }
-
-    @Override
-    public void setUserVisibleHint(final boolean isVisibleToUser) {
-        super.setUserVisibleHint(isVisibleToUser);
-        mIsVisibleToUser = isVisibleToUser;
     }
 
     /*//////////////////////////////////////////////////////////////////////////
     // Init
     //////////////////////////////////////////////////////////////////////////*/
 
+    /**
+     * This method is called in {@link #onViewCreated(View, Bundle)} to initialize the views.
+     *
+     * <p>
+     * {@link #initListeners()} is called after this method to initialize the corresponding
+     * listeners.
+     * </p>
+     * @param rootView The inflated view for this fragment
+     *                 (provided by {@link #onViewCreated(View, Bundle)})
+     * @param savedInstanceState The saved state of this fragment
+ *                               (provided by {@link #onViewCreated(View, Bundle)})
+     */
     protected void initViews(final View rootView, final Bundle savedInstanceState) {
     }
 
+    /**
+     * Initialize the listeners for this fragment.
+     *
+     * <p>
+     * This method is called after {@link #initViews(View, Bundle)}
+     * in {@link #onViewCreated(View, Bundle)}.
+     * </p>
+     */
     protected void initListeners() {
     }
 
@@ -112,16 +115,26 @@ public abstract class BaseFragment extends Fragment {
         if (DEBUG) {
             Log.d(TAG, "setTitle() called with: title = [" + title + "]");
         }
-        if ((!useAsFrontPage || mIsVisibleToUser)
-                && (activity != null && activity.getSupportActionBar() != null)) {
+        if (!useAsFrontPage && activity != null && activity.getSupportActionBar() != null) {
             activity.getSupportActionBar().setDisplayShowTitleEnabled(true);
             activity.getSupportActionBar().setTitle(title);
         }
     }
 
+    /**
+     * Finds the root fragment by looping through all of the parent fragments. The root fragment
+     * is supposed to be {@link org.schabi.newpipe.fragments.MainFragment}, and is the fragment that
+     * handles keeping the backstack of opened fragments in NewPipe, and also the player bottom
+     * sheet. This function therefore returns the fragment manager of said fragment.
+     *
+     * @return the fragment manager of the root fragment, i.e.
+     *         {@link org.schabi.newpipe.fragments.MainFragment}
+     */
     protected FragmentManager getFM() {
-        return getParentFragment() == null
-                ? getFragmentManager()
-                : getParentFragment().getFragmentManager();
+        Fragment current = this;
+        while (current.getParentFragment() != null) {
+            current = current.getParentFragment();
+        }
+        return current.getFragmentManager();
     }
 }

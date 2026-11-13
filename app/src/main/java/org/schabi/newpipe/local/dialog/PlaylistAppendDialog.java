@@ -1,10 +1,12 @@
 package org.schabi.newpipe.local.dialog;
 
-import android.content.Context;
+import static org.schabi.newpipe.database.playlist.model.PlaylistEntity.DEFAULT_THUMBNAIL_ID;
+
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -14,72 +16,34 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import org.schabi.newpipe.NewPipeDatabase;
 import org.schabi.newpipe.R;
-import org.schabi.newpipe.database.LocalItem;
-import org.schabi.newpipe.database.playlist.PlaylistMetadataEntry;
+import org.schabi.newpipe.database.playlist.PlaylistDuplicatesEntry;
 import org.schabi.newpipe.database.stream.model.StreamEntity;
-import org.schabi.newpipe.extractor.stream.StreamInfo;
-import org.schabi.newpipe.extractor.stream.StreamInfoItem;
 import org.schabi.newpipe.local.LocalItemListAdapter;
 import org.schabi.newpipe.local.playlist.LocalPlaylistManager;
-import org.schabi.newpipe.player.playqueue.PlayQueueItem;
-import org.schabi.newpipe.util.OnClickGesture;
 
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers;
 import io.reactivex.rxjava3.disposables.CompositeDisposable;
-import io.reactivex.rxjava3.disposables.Disposable;
 
 public final class PlaylistAppendDialog extends PlaylistDialog {
     private static final String TAG = PlaylistAppendDialog.class.getCanonicalName();
 
     private RecyclerView playlistRecyclerView;
     private LocalItemListAdapter playlistAdapter;
+    private TextView playlistDuplicateIndicator;
 
     private final CompositeDisposable playlistDisposables = new CompositeDisposable();
 
-    public static Disposable onPlaylistFound(
-            final Context context, final Runnable onSuccess, final Runnable onFailed
-    ) {
-        final LocalPlaylistManager playlistManager =
-                new LocalPlaylistManager(NewPipeDatabase.getInstance(context));
-
-        return playlistManager.hasPlaylists()
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribe(hasPlaylists -> {
-                    if (hasPlaylists) {
-                        onSuccess.run();
-                    } else {
-                        onFailed.run();
-                    }
-                });
-    }
-
-    public static PlaylistAppendDialog fromStreamInfo(final StreamInfo info) {
+    /**
+     * Create a new instance of {@link PlaylistAppendDialog}.
+     *
+     * @param streamEntities    a list of {@link StreamEntity} to be added to playlists
+     * @return a new instance of {@link PlaylistAppendDialog}
+     */
+    public static PlaylistAppendDialog newInstance(final List<StreamEntity> streamEntities) {
         final PlaylistAppendDialog dialog = new PlaylistAppendDialog();
-        dialog.setInfo(Collections.singletonList(new StreamEntity(info)));
-        return dialog;
-    }
-
-    public static PlaylistAppendDialog fromStreamInfoItems(final List<StreamInfoItem> items) {
-        final PlaylistAppendDialog dialog = new PlaylistAppendDialog();
-        final List<StreamEntity> entities = new ArrayList<>(items.size());
-        for (final StreamInfoItem item : items) {
-            entities.add(new StreamEntity(item));
-        }
-        dialog.setInfo(entities);
-        return dialog;
-    }
-
-    public static PlaylistAppendDialog fromPlayQueueItems(final List<PlayQueueItem> items) {
-        final PlaylistAppendDialog dialog = new PlaylistAppendDialog();
-        final List<StreamEntity> entities = new ArrayList<>(items.size());
-        for (final PlayQueueItem item : items) {
-            entities.add(new StreamEntity(item));
-        }
-        dialog.setInfo(entities);
+        dialog.setStreamEntities(streamEntities);
         return dialog;
     }
 
@@ -101,14 +65,11 @@ public final class PlaylistAppendDialog extends PlaylistDialog {
                 new LocalPlaylistManager(NewPipeDatabase.getInstance(requireContext()));
 
         playlistAdapter = new LocalItemListAdapter(getActivity());
-        playlistAdapter.setSelectedListener(new OnClickGesture<LocalItem>() {
-            @Override
-            public void selected(final LocalItem selectedItem) {
-                if (!(selectedItem instanceof PlaylistMetadataEntry) || getStreams() == null) {
-                    return;
-                }
-                onPlaylistSelected(playlistManager, (PlaylistMetadataEntry) selectedItem,
-                        getStreams());
+        playlistAdapter.setSelectedListener(selectedItem -> {
+            final List<StreamEntity> entities = getStreamEntities();
+            if (selectedItem instanceof PlaylistDuplicatesEntry && entities != null) {
+                onPlaylistSelected(playlistManager,
+                        (PlaylistDuplicatesEntry) selectedItem, entities);
             }
         });
 
@@ -116,10 +77,13 @@ public final class PlaylistAppendDialog extends PlaylistDialog {
         playlistRecyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
         playlistRecyclerView.setAdapter(playlistAdapter);
 
+        playlistDuplicateIndicator = view.findViewById(R.id.playlist_duplicate);
+
         final View newPlaylistButton = view.findViewById(R.id.newPlaylist);
         newPlaylistButton.setOnClickListener(ignored -> openCreatePlaylistDialog());
 
-        playlistDisposables.add(playlistManager.getPlaylists()
+        playlistDisposables.add(playlistManager
+                .getPlaylistDuplicates(getStreamEntities().get(0).getUrl())
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(this::onPlaylistsReceived));
     }
@@ -145,43 +109,68 @@ public final class PlaylistAppendDialog extends PlaylistDialog {
     // Helper
     //////////////////////////////////////////////////////////////////////////*/
 
+    /** Display create playlist dialog. */
     public void openCreatePlaylistDialog() {
-        if (getStreams() == null || !isAdded()) {
+        if (getStreamEntities() == null || !isAdded()) {
             return;
         }
 
-        PlaylistCreationDialog.newInstance(getStreams()).show(getParentFragmentManager(), TAG);
+        final PlaylistCreationDialog playlistCreationDialog =
+                PlaylistCreationDialog.newInstance(getStreamEntities());
+        // Move the dismissListener to the new dialog.
+        playlistCreationDialog.setOnDismissListener(this.getOnDismissListener());
+        this.setOnDismissListener(null);
+
+        playlistCreationDialog.show(getParentFragmentManager(), TAG);
         requireDialog().dismiss();
     }
 
-    private void onPlaylistsReceived(@NonNull final List<PlaylistMetadataEntry> playlists) {
-        if (playlistAdapter != null && playlistRecyclerView != null) {
+    private void onPlaylistsReceived(@NonNull final List<PlaylistDuplicatesEntry> playlists) {
+        if (playlistAdapter != null
+                && playlistRecyclerView != null
+                && playlistDuplicateIndicator != null) {
             playlistAdapter.clearStreamItemList();
             playlistAdapter.addItems(playlists);
             playlistRecyclerView.setVisibility(View.VISIBLE);
+            playlistDuplicateIndicator.setVisibility(
+                    anyPlaylistContainsDuplicates(playlists) ? View.VISIBLE : View.GONE);
         }
     }
 
+    private boolean anyPlaylistContainsDuplicates(final List<PlaylistDuplicatesEntry> playlists) {
+        return playlists.stream()
+                .anyMatch(playlist -> playlist.getTimesStreamIsContained() > 0);
+    }
+
     private void onPlaylistSelected(@NonNull final LocalPlaylistManager manager,
-                                    @NonNull final PlaylistMetadataEntry playlist,
+                                    @NonNull final PlaylistDuplicatesEntry playlist,
                                     @NonNull final List<StreamEntity> streams) {
-        if (getStreams() == null) {
-            return;
+
+        final String toastText;
+        if (playlist.getTimesStreamIsContained() > 0) {
+            toastText = getString(R.string.playlist_add_stream_success_duplicate,
+                    playlist.getTimesStreamIsContained());
+        } else {
+            toastText = getString(R.string.playlist_add_stream_success);
         }
 
-        final Toast successToast = Toast.makeText(getContext(),
-                R.string.playlist_add_stream_success, Toast.LENGTH_SHORT);
+        final Toast successToast = Toast.makeText(getContext(), toastText, Toast.LENGTH_SHORT);
 
-        if (playlist.thumbnailUrl.equals("drawable://" + R.drawable.dummy_thumbnail_playlist)) {
-            playlistDisposables.add(manager
-                    .changePlaylistThumbnail(playlist.uid, streams.get(0).getThumbnailUrl())
-                    .observeOn(AndroidSchedulers.mainThread())
-                    .subscribe(ignored -> successToast.show()));
-        }
-
-        playlistDisposables.add(manager.appendToPlaylist(playlist.uid, streams)
+        playlistDisposables.add(manager.appendToPlaylist(playlist.getUid(), streams)
                 .observeOn(AndroidSchedulers.mainThread())
-                .subscribe(ignored -> successToast.show()));
+                .subscribe(ignored -> {
+                    successToast.show();
+
+                    if (playlist.getThumbnailStreamId() != null
+                            && playlist.getThumbnailStreamId() == DEFAULT_THUMBNAIL_ID
+                    ) {
+                        playlistDisposables.add(manager
+                                .changePlaylistThumbnail(playlist.getUid(), streams.get(0).getUid(),
+                                        false)
+                                .observeOn(AndroidSchedulers.mainThread())
+                                .subscribe(ignore -> successToast.show()));
+                    }
+                }));
 
         requireDialog().dismiss();
     }

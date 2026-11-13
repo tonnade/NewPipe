@@ -1,2 +1,2 @@
-# Correções
+# Corrigido
 - Erro na função de desencriptação novamente corrigido quente.

@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2017-2025 NewPipe contributors <https://newpipe.net>
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 package org.schabi.newpipe.settings;
 
 import android.content.DialogInterface;
@@ -5,6 +10,7 @@ import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
@@ -14,53 +20,22 @@ import androidx.fragment.app.DialogFragment;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import com.nostra13.universalimageloader.core.DisplayImageOptions;
-import com.nostra13.universalimageloader.core.ImageLoader;
-
 import org.schabi.newpipe.R;
 import org.schabi.newpipe.database.subscription.SubscriptionEntity;
-import org.schabi.newpipe.error.ErrorActivity;
+import org.schabi.newpipe.error.ErrorUtil;
 import org.schabi.newpipe.local.subscription.SubscriptionManager;
 import org.schabi.newpipe.util.ThemeHelper;
+import org.schabi.newpipe.util.image.CoilHelper;
 
 import java.util.List;
 import java.util.Vector;
 
-import de.hdodenhof.circleimageview.CircleImageView;
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers;
 import io.reactivex.rxjava3.core.Observer;
 import io.reactivex.rxjava3.disposables.Disposable;
 import io.reactivex.rxjava3.schedulers.Schedulers;
 
-/**
- * Created by Christian Schabesberger on 26.09.17.
- * SelectChannelFragment.java is part of NewPipe.
- * <p>
- * NewPipe is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- * </p>
- * <p>
- * NewPipe is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- * </p>
- * <p>
- * You should have received a copy of the GNU General Public License
- * along with NewPipe.  If not, see <http://www.gnu.org/licenses/>.
- * </p>
- */
-
 public class SelectChannelFragment extends DialogFragment {
-    /**
-     * This contains the base display options for images.
-     */
-    private static final DisplayImageOptions DISPLAY_IMAGE_OPTIONS
-            = new DisplayImageOptions.Builder().cacheInMemory(true).build();
-
-    private final ImageLoader imageLoader = ImageLoader.getInstance();
 
     private OnSelectedListener onSelectedListener = null;
     private OnCancelListener onCancelListener = null;
@@ -162,7 +137,7 @@ public class SelectChannelFragment extends DialogFragment {
 
             @Override
             public void onError(@NonNull final Throwable exception) {
-                ErrorActivity.reportUiErrorInSnackbar(SelectChannelFragment.this,
+                ErrorUtil.showUiErrorSnackbar(SelectChannelFragment.this,
                         "Loading subscription", exception);
             }
 
@@ -183,7 +158,7 @@ public class SelectChannelFragment extends DialogFragment {
         void onCancel();
     }
 
-    private class SelectChannelAdapter
+    private final class SelectChannelAdapter
             extends RecyclerView.Adapter<SelectChannelAdapter.SelectChannelItemHolder> {
         @NonNull
         @Override
@@ -199,8 +174,7 @@ public class SelectChannelFragment extends DialogFragment {
             final SubscriptionEntity entry = subscriptions.get(position);
             holder.titleView.setText(entry.getName());
             holder.view.setOnClickListener(view -> clickedItem(position));
-            imageLoader.displayImage(entry.getAvatarUrl(), holder.thumbnailView,
-                    DISPLAY_IMAGE_OPTIONS);
+            CoilHelper.INSTANCE.loadAvatar(holder.thumbnailView, entry.getAvatarUrl());
         }
 
         @Override
@@ -210,7 +184,7 @@ public class SelectChannelFragment extends DialogFragment {
 
         public class SelectChannelItemHolder extends RecyclerView.ViewHolder {
             public final View view;
-            final CircleImageView thumbnailView;
+            final ImageView thumbnailView;
             final TextView titleView;
             SelectChannelItemHolder(final View v) {
                 super(v);

@@ -6,6 +6,7 @@ import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -14,15 +15,19 @@ import org.schabi.newpipe.R;
 import org.schabi.newpipe.error.UserAction;
 import org.schabi.newpipe.extractor.ListExtractor;
 import org.schabi.newpipe.extractor.comments.CommentsInfo;
+import org.schabi.newpipe.extractor.comments.CommentsInfoItem;
 import org.schabi.newpipe.fragments.list.BaseListInfoFragment;
+import org.schabi.newpipe.info_list.ItemViewMode;
 import org.schabi.newpipe.ktx.ViewUtils;
 import org.schabi.newpipe.util.ExtractorHelper;
 
 import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.disposables.CompositeDisposable;
 
-public class CommentsFragment extends BaseListInfoFragment<CommentsInfo> {
+public class CommentsFragment extends BaseListInfoFragment<CommentsInfoItem, CommentsInfo> {
     private final CompositeDisposable disposables = new CompositeDisposable();
+
+    private TextView emptyStateDesc;
 
     public static CommentsFragment getInstance(final int serviceId, final String url,
                                                final String name) {
@@ -33,6 +38,13 @@ public class CommentsFragment extends BaseListInfoFragment<CommentsInfo> {
 
     public CommentsFragment() {
         super(UserAction.REQUESTED_COMMENTS);
+    }
+
+    @Override
+    protected void initViews(final View rootView, final Bundle savedInstanceState) {
+        super.initViews(rootView, savedInstanceState);
+
+        emptyStateDesc = rootView.findViewById(R.id.empty_state_desc);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -57,7 +69,7 @@ public class CommentsFragment extends BaseListInfoFragment<CommentsInfo> {
     //////////////////////////////////////////////////////////////////////////*/
 
     @Override
-    protected Single<ListExtractor.InfoItemsPage> loadMoreItemsLogic() {
+    protected Single<ListExtractor.InfoItemsPage<CommentsInfoItem>> loadMoreItemsLogic() {
         return ExtractorHelper.getMoreCommentItems(serviceId, currentInfo, currentNextPage);
     }
 
@@ -73,6 +85,12 @@ public class CommentsFragment extends BaseListInfoFragment<CommentsInfo> {
     @Override
     public void handleResult(@NonNull final CommentsInfo result) {
         super.handleResult(result);
+
+        emptyStateDesc.setText(
+                result.isCommentsDisabled()
+                        ? R.string.comments_are_disabled
+                        : R.string.no_comments);
+
         ViewUtils.slideUp(requireView(), 120, 150, 0.06f);
         disposables.clear();
     }
@@ -85,10 +103,21 @@ public class CommentsFragment extends BaseListInfoFragment<CommentsInfo> {
     public void setTitle(final String title) { }
 
     @Override
-    public void onCreateOptionsMenu(final Menu menu, final MenuInflater inflater) { }
+    public void onCreateOptionsMenu(@NonNull final Menu menu,
+                                    @NonNull final MenuInflater inflater) { }
 
     @Override
-    protected boolean isGridLayout() {
-        return false;
+    protected ItemViewMode getItemViewMode() {
+        return ItemViewMode.LIST;
+    }
+
+    public boolean scrollToComment(final CommentsInfoItem comment) {
+        final int position = infoListAdapter.getItemsList().indexOf(comment);
+        if (position < 0) {
+            return false;
+        }
+
+        itemsList.scrollToPosition(position);
+        return true;
     }
 }

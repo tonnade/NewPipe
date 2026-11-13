@@ -1,17 +1,16 @@
 package org.schabi.newpipe.info_list
 
 import android.util.Log
-import com.xwray.groupie.GroupAdapter
-import com.xwray.groupie.GroupieViewHolder
-import org.schabi.newpipe.extractor.stream.StreamInfo
+import com.xwray.groupie.GroupieAdapter
 import kotlin.math.max
+import org.schabi.newpipe.extractor.stream.StreamInfo
 
 /**
  * Custom RecyclerView.Adapter/GroupieAdapter for [StreamSegmentItem] for handling selection state.
  */
 class StreamSegmentAdapter(
     private val listener: StreamSegmentListener
-) : GroupAdapter<GroupieViewHolder>() {
+) : GroupieAdapter() {
 
     var currentIndex: Int = 0
         private set
@@ -62,5 +61,6 @@ class StreamSegmentAdapter(
 
     interface StreamSegmentListener {
         fun onItemClick(item: StreamSegmentItem, seconds: Int)
+        fun onItemLongClick(item: StreamSegmentItem, seconds: Int)
     }
 }

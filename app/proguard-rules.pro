@@ -1,53 +1,59 @@
-# Add project specific ProGuard rules here.
-# By default, the flags in this file are appended to flags specified
-# in /home/the-scrabi/bin/Android/Sdk/tools/proguard/proguard-android.txt
-# You can edit the include path and order by changing the proguardFiles
-# directive in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# https://developer.android.com/build/shrink-code
 
-# Add any project specific keep options here:
-
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
-
+## Helps debug release versions
 -dontobfuscate
+
+## Rules for NewPipeExtractor
 -keep class org.schabi.newpipe.extractor.timeago.patterns.** { *; }
--keep class org.ocpsoft.prettytime.i18n.** { *; }
-
+## Rules for Rhino and Rhino Engine
+-keep class org.mozilla.javascript.* { *; }
 -keep class org.mozilla.javascript.** { *; }
-
+-keep class org.mozilla.javascript.engine.** { *; }
 -keep class org.mozilla.classfile.ClassFileWriter
+-dontwarn org.mozilla.javascript.JavaToJSONConverters
+-dontwarn org.mozilla.javascript.tools.**
+-keep class javax.script.** { *; }
+-dontwarn javax.script.**
+-keep class jdk.dynalink.** { *; }
+-dontwarn jdk.dynalink.**
+
+## Rules for ExoPlayer
 -keep class com.google.android.exoplayer2.** { *; }
 
--dontwarn org.mozilla.javascript.tools.**
--dontwarn android.arch.util.paging.CountedDataSource
--dontwarn android.arch.persistence.room.paging.LimitOffsetDataSource
-
-
-# Rules for icepick. Copy paste from https://github.com/frankiesardo/icepick
--dontwarn icepick.**
--keep class icepick.** { *; }
--keep class **$$Icepick { *; }
--keepclasseswithmembernames class * {
-    @icepick.* <fields>;
-}
--keepnames class * { @icepick.State *;}
-
-# Rules for OkHttp. Copy paste from https://github.com/square/okhttp
+## Rules for OkHttp. Copy pasted from https://github.com/square/okhttp
 -dontwarn okhttp3.**
 -dontwarn okio.**
--dontwarn javax.annotation.**
-# A resource is loaded with a relative path so the package of this class must be preserved.
--keepnames class okhttp3.internal.publicsuffix.PublicSuffixDatabase
+
+## See https://github.com/TeamNewPipe/NewPipe/pull/1441
 -keepclassmembers class * implements java.io.Serializable {
     static final long serialVersionUID;
     !static !transient <fields>;
     private void writeObject(java.io.ObjectOutputStream);
     private void readObject(java.io.ObjectInputStream);
 }
+
+## For some reason NotificationModeConfigFragment wasn't kept (only referenced in a preference xml)
+-keep class org.schabi.newpipe.settings.notifications.** { *; }
+
+# Prevent R8 from stripping or renaming Protobuf internal fields
+-keepclassmembers class * extends com.google.protobuf.GeneratedMessageLite {
+    <fields>;
+}
+
+## Keep Kotlinx Serialization classes
+-keepclassmembers class kotlinx.serialization.json.** {
+    *** Companion;
+}
+-keepclasseswithmembers class kotlinx.serialization.json.** {
+    kotlinx.serialization.KSerializer serializer(...);
+}
+-keep,includedescriptorclasses class org.schabi.newpipe.**$$serializer { *; }
+-keepclassmembers class org.schabi.newpipe.** {
+    *** Companion;
+}
+-keepclasseswithmembers class org.schabi.newpipe.** {
+    kotlinx.serialization.KSerializer serializer(...);
+}
+
+# See https://github.com/TeamNewPipe/NewPipe/issues/13508
+-keep class org.ocpsoft.prettytime.i18n.Resources* { *; }

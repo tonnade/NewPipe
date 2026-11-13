@@ -17,7 +17,7 @@ import java.util.Objects;
 import us.shandian.giga.get.DownloadMission;
 import us.shandian.giga.get.FinishedMission;
 import us.shandian.giga.get.Mission;
-import us.shandian.giga.io.StoredFileHelper;
+import org.schabi.newpipe.streams.io.StoredFileHelper;
 
 /**
  * SQLite helper to store finished {@link us.shandian.giga.get.FinishedMission}'s
@@ -102,14 +102,23 @@ public class FinishedMissionStore extends SQLiteOpenHelper {
                 db.beginTransaction();
                 while (cursor.moveToNext()) {
                     ContentValues values = new ContentValues();
-                    values.put(KEY_SOURCE, cursor.getString(cursor.getColumnIndex(KEY_SOURCE)));
-                    values.put(KEY_DONE, cursor.getString(cursor.getColumnIndex(KEY_DONE)));
-                    values.put(KEY_TIMESTAMP, cursor.getLong(cursor.getColumnIndex(KEY_TIMESTAMP)));
-                    values.put(KEY_KIND, cursor.getString(cursor.getColumnIndex(KEY_KIND)));
+                    values.put(
+                            KEY_SOURCE,
+                            cursor.getString(cursor.getColumnIndexOrThrow(KEY_SOURCE))
+                    );
+                    values.put(
+                            KEY_DONE,
+                            cursor.getString(cursor.getColumnIndexOrThrow(KEY_DONE))
+                    );
+                    values.put(
+                            KEY_TIMESTAMP,
+                            cursor.getLong(cursor.getColumnIndexOrThrow(KEY_TIMESTAMP))
+                    );
+                    values.put(KEY_KIND, cursor.getString(cursor.getColumnIndexOrThrow(KEY_KIND)));
                     values.put(KEY_PATH, Uri.fromFile(
                             new File(
-                                    cursor.getString(cursor.getColumnIndex(KEY_LOCATION)),
-                                    cursor.getString(cursor.getColumnIndex(KEY_NAME))
+                                    cursor.getString(cursor.getColumnIndexOrThrow(KEY_LOCATION)),
+                                    cursor.getString(cursor.getColumnIndexOrThrow(KEY_NAME))
                             )
                     ).toString());
 
@@ -141,7 +150,8 @@ public class FinishedMissionStore extends SQLiteOpenHelper {
     }
 
     private FinishedMission getMissionFromCursor(Cursor cursor) {
-        String kind = Objects.requireNonNull(cursor).getString(cursor.getColumnIndex(KEY_KIND));
+        String kind = Objects.requireNonNull(cursor)
+                .getString(cursor.getColumnIndexOrThrow(KEY_KIND));
         if (kind == null || kind.isEmpty()) kind = "?";
 
         String path = cursor.getString(cursor.getColumnIndexOrThrow(KEY_PATH));

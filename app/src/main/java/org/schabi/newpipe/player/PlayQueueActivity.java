@@ -1,7 +1,9 @@
 package org.schabi.newpipe.player;
 
+import static org.schabi.newpipe.QueueItemMenuUtil.openPopupMenu;
+import static org.schabi.newpipe.player.helper.PlayerHelper.formatSpeed;
+
 import android.content.ComponentName;
-import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.os.Bundle;
@@ -10,11 +12,14 @@ import android.provider.Settings;
 import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.SubMenu;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.PopupMenu;
+import android.widget.ImageButton;
 import android.widget.SeekBar;
+import android.widget.TextView;
 
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -24,12 +29,13 @@ import com.google.android.exoplayer2.PlaybackParameters;
 
 import org.schabi.newpipe.R;
 import org.schabi.newpipe.databinding.ActivityPlayerQueueControlBinding;
+import org.schabi.newpipe.extractor.stream.AudioStream;
 import org.schabi.newpipe.extractor.stream.StreamInfo;
 import org.schabi.newpipe.fragments.OnScrollBelowItemsListener;
-import org.schabi.newpipe.local.dialog.PlaylistAppendDialog;
-import org.schabi.newpipe.local.dialog.PlaylistCreationDialog;
+import org.schabi.newpipe.local.dialog.PlaylistDialog;
 import org.schabi.newpipe.player.event.PlayerEventListener;
 import org.schabi.newpipe.player.helper.PlaybackParameterDialog;
+import org.schabi.newpipe.player.mediaitem.MediaItemTag;
 import org.schabi.newpipe.player.playqueue.PlayQueue;
 import org.schabi.newpipe.player.playqueue.PlayQueueAdapter;
 import org.schabi.newpipe.player.playqueue.PlayQueueItem;
@@ -39,14 +45,11 @@ import org.schabi.newpipe.player.playqueue.PlayQueueItemTouchCallback;
 import org.schabi.newpipe.util.Localization;
 import org.schabi.newpipe.util.NavigationHelper;
 import org.schabi.newpipe.util.PermissionHelper;
+import org.schabi.newpipe.util.ServiceHelper;
 import org.schabi.newpipe.util.ThemeHelper;
 
-import java.util.Collections;
 import java.util.List;
-
-import static org.schabi.newpipe.player.helper.PlayerHelper.formatSpeed;
-import static org.schabi.newpipe.util.Localization.assureCorrectAppLanguage;
-import static org.schabi.newpipe.util.ShareUtils.shareText;
+import java.util.Optional;
 
 public final class PlayQueueActivity extends AppCompatActivity
         implements PlayerEventListener, SeekBar.OnSeekBarChangeListener,
@@ -54,15 +57,23 @@ public final class PlayQueueActivity extends AppCompatActivity
 
     private static final String TAG = PlayQueueActivity.class.getSimpleName();
 
-    private static final int RECYCLER_ITEM_POPUP_MENU_GROUP_ID = 47;
     private static final int SMOOTH_SCROLL_MAXIMUM_DISTANCE = 80;
 
-    protected Player player;
+    private static final int MENU_ID_AUDIO_TRACK = 71;
+
+    private Player player;
 
     private boolean serviceBound;
     private ServiceConnection serviceConnection;
 
     private boolean seeking;
+
+    /**
+     * The calculated max width for {@code R.id.queue_total_duration}
+     * used to set a fixed width for the TextView to prevent {@code R.id.artist_name}
+     * from resetting to left when updating the duration text.
+     */
+    private int queueDurationWidth;
 
     ////////////////////////////////////////////////////////////////////////////
     // Views
@@ -80,9 +91,8 @@ public final class PlayQueueActivity extends AppCompatActivity
 
     @Override
     protected void onCreate(final Bundle savedInstanceState) {
-        assureCorrectAppLanguage(this);
         super.onCreate(savedInstanceState);
-        ThemeHelper.setTheme(this);
+        ThemeHelper.setTheme(this, ServiceHelper.getSelectedServiceId(this));
 
         queueControlBinding = ActivityPlayerQueueControlBinding.inflate(getLayoutInflater());
         setContentView(queueControlBinding.getRoot());
@@ -102,8 +112,12 @@ public final class PlayQueueActivity extends AppCompatActivity
         this.menu = m;
         getMenuInflater().inflate(R.menu.menu_play_queue, m);
         getMenuInflater().inflate(R.menu.menu_play_queue_bg, m);
+        buildAudioTrackMenu();
         onMaybeMuteChanged();
-        onPlaybackParameterChanged(player.getPlaybackParameters());
+        // to avoid null reference
+        if (player != null) {
+            onPlaybackParameterChanged(player.getPlaybackParameters());
+        }
         return true;
     }
 
@@ -121,42 +135,46 @@ public final class PlayQueueActivity extends AppCompatActivity
 
     @Override
     public boolean onOptionsItemSelected(final MenuItem item) {
-        switch (item.getItemId()) {
-            case android.R.id.home:
-                finish();
-                return true;
-            case R.id.action_settings:
-                NavigationHelper.openSettings(this);
-                return true;
-            case R.id.action_append_playlist:
-                appendAllToPlaylist();
-                return true;
-            case R.id.action_playback_speed:
-                openPlaybackParameterDialog();
-                return true;
-            case R.id.action_mute:
-                player.onMuteUnmuteButtonClicked();
-                return true;
-            case R.id.action_system_audio:
-                startActivity(new Intent(Settings.ACTION_SOUND_SETTINGS));
-                return true;
-            case R.id.action_switch_main:
+        final int itemId = item.getItemId();
+        if (itemId == android.R.id.home) {
+            finish();
+            return true;
+        } else if (itemId == R.id.action_settings) {
+            NavigationHelper.openSettings(this);
+            return true;
+        } else if (itemId == R.id.action_append_playlist) {
+            PlaylistDialog.showForPlayQueue(player, getSupportFragmentManager());
+            return true;
+        } else if (itemId == R.id.action_playback_speed) {
+            openPlaybackParameterDialog();
+            return true;
+        } else if (itemId == R.id.action_mute) {
+            player.toggleMute();
+            return true;
+        } else if (itemId == R.id.action_system_audio) {
+            startActivity(new Intent(Settings.ACTION_SOUND_SETTINGS));
+            return true;
+        } else if (itemId == R.id.action_switch_main) {
+            this.player.setRecovery();
+            NavigationHelper.playOnMainPlayer(this, player.getPlayQueue(), true);
+            return true;
+        } else if (itemId == R.id.action_switch_popup) {
+            if (PermissionHelper.isPopupEnabledElseAsk(this)) {
                 this.player.setRecovery();
-                NavigationHelper.playOnMainPlayer(this, player.getPlayQueue(), true);
-                return true;
-            case R.id.action_switch_popup:
-                if (PermissionHelper.isPopupEnabled(this)) {
-                    this.player.setRecovery();
-                    NavigationHelper.playOnPopupPlayer(this, player.getPlayQueue(), true);
-                } else {
-                    PermissionHelper.showPopupEnablementToast(this);
-                }
-                return true;
-            case R.id.action_switch_background:
-                this.player.setRecovery();
-                NavigationHelper.playOnBackgroundPlayer(this, player.getPlayQueue(), true);
-                return true;
+                NavigationHelper.playOnPopupPlayer(this, player.getPlayQueue(), true);
+            }
+            return true;
+        } else if (itemId == R.id.action_switch_background) {
+            this.player.setRecovery();
+            NavigationHelper.playOnBackgroundPlayer(this, player.getPlayQueue(), true);
+            return true;
         }
+
+        if (item.getGroupId() == MENU_ID_AUDIO_TRACK) {
+            onAudioTrackClick(item.getItemId());
+            return true;
+        }
+
         return super.onOptionsItemSelected(item);
     }
 
@@ -171,7 +189,10 @@ public final class PlayQueueActivity extends AppCompatActivity
     ////////////////////////////////////////////////////////////////////////////
 
     private void bind() {
-        final Intent bindIntent = new Intent(this, MainPlayer.class);
+        // Note: this code should not really exist, and PlayerHolder should be used instead, but
+        // it will be rewritten when NewPlayer will replace the current player.
+        final Intent bindIntent = new Intent(this, PlayerService.class);
+        bindIntent.setAction(PlayerService.BIND_PLAYER_HOLDER_ACTION);
         final boolean success = bindService(bindIntent, serviceConnection, BIND_AUTO_CREATE);
         if (!success) {
             unbindService(serviceConnection);
@@ -187,10 +208,7 @@ public final class PlayQueueActivity extends AppCompatActivity
                 player.removeActivityListener(this);
             }
 
-            if (player != null && player.getPlayQueueAdapter() != null) {
-                player.getPlayQueueAdapter().unsetSelectedListener();
-            }
-            queueControlBinding.playQueue.setAdapter(null);
+            onQueueUpdate(null);
             if (itemTouchHelper != null) {
                 itemTouchHelper.attachToRecyclerView(null);
             }
@@ -211,17 +229,14 @@ public final class PlayQueueActivity extends AppCompatActivity
             public void onServiceConnected(final ComponentName name, final IBinder service) {
                 Log.d(TAG, "Player service is connected");
 
-                if (service instanceof PlayerServiceBinder) {
-                    player = ((PlayerServiceBinder) service).getPlayerInstance();
-                } else if (service instanceof MainPlayer.LocalBinder) {
-                    player = ((MainPlayer.LocalBinder) service).getPlayer();
+                if (service instanceof PlayerService.LocalBinder) {
+                    player = ((PlayerService.LocalBinder) service).getService().getPlayer();
                 }
 
-                if (player == null || player.getPlayQueue() == null
-                        || player.getPlayQueueAdapter() == null || player.exoPlayerIsNull()) {
+                if (player == null || player.getPlayQueue() == null || player.exoPlayerIsNull()) {
                     unbind();
-                    finish();
                 } else {
+                    onQueueUpdate(player.getPlayQueue());
                     buildComponents();
                     if (player != null) {
                         player.setActivityListener(PlayQueueActivity.this);
@@ -244,7 +259,6 @@ public final class PlayQueueActivity extends AppCompatActivity
 
     private void buildQueue() {
         queueControlBinding.playQueue.setLayoutManager(new LinearLayoutManager(this));
-        queueControlBinding.playQueue.setAdapter(player.getPlayQueueAdapter());
         queueControlBinding.playQueue.setClickable(true);
         queueControlBinding.playQueue.setLongClickable(true);
         queueControlBinding.playQueue.clearOnScrollListeners();
@@ -252,8 +266,6 @@ public final class PlayQueueActivity extends AppCompatActivity
 
         itemTouchHelper = new ItemTouchHelper(getItemTouchCallback());
         itemTouchHelper.attachToRecyclerView(queueControlBinding.playQueue);
-
-        player.getPlayQueueAdapter().setSelectedListener(getOnSelectedListener());
     }
 
     private void buildMetadata() {
@@ -275,48 +287,6 @@ public final class PlayQueueActivity extends AppCompatActivity
         queueControlBinding.controlFastForward.setOnClickListener(this);
         queueControlBinding.controlForward.setOnClickListener(this);
         queueControlBinding.controlShuffle.setOnClickListener(this);
-    }
-
-    private void buildItemPopupMenu(final PlayQueueItem item, final View view) {
-        final PopupMenu popupMenu = new PopupMenu(this, view);
-        final MenuItem remove = popupMenu.getMenu().add(RECYCLER_ITEM_POPUP_MENU_GROUP_ID, 0,
-                Menu.NONE, R.string.play_queue_remove);
-        remove.setOnMenuItemClickListener(menuItem -> {
-            if (player == null) {
-                return false;
-            }
-
-            final int index = player.getPlayQueue().indexOf(item);
-            if (index != -1) {
-                player.getPlayQueue().remove(index);
-            }
-            return true;
-        });
-
-        final MenuItem detail = popupMenu.getMenu().add(RECYCLER_ITEM_POPUP_MENU_GROUP_ID, 1,
-                Menu.NONE, R.string.play_queue_stream_detail);
-        detail.setOnMenuItemClickListener(menuItem -> {
-            // playQueue is null since we don't want any queue change
-            NavigationHelper.openVideoDetail(this, item.getServiceId(), item.getUrl(),
-                    item.getTitle(), null, false);
-            return true;
-        });
-
-        final MenuItem append = popupMenu.getMenu().add(RECYCLER_ITEM_POPUP_MENU_GROUP_ID, 2,
-                Menu.NONE, R.string.append_playlist);
-        append.setOnMenuItemClickListener(menuItem -> {
-            openPlaylistAppendDialog(Collections.singletonList(item));
-            return true;
-        });
-
-        final MenuItem share = popupMenu.getMenu().add(RECYCLER_ITEM_POPUP_MENU_GROUP_ID, 3,
-                Menu.NONE, R.string.share);
-        share.setOnMenuItemClickListener(menuItem -> {
-            shareText(getApplicationContext(), item.getTitle(), item.getUrl());
-            return true;
-        });
-
-        popupMenu.show();
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -366,13 +336,9 @@ public final class PlayQueueActivity extends AppCompatActivity
 
             @Override
             public void held(final PlayQueueItem item, final View view) {
-                if (player == null) {
-                    return;
-                }
-
-                final int index = player.getPlayQueue().indexOf(item);
-                if (index != -1) {
-                    buildItemPopupMenu(item, view);
+                if (player != null && player.getPlayQueue().indexOf(item) != -1) {
+                    openPopupMenu(player.getPlayQueue(), item, view, false,
+                            getSupportFragmentManager(), PlayQueueActivity.this);
                 }
             }
 
@@ -408,6 +374,63 @@ public final class PlayQueueActivity extends AppCompatActivity
         }
     }
 
+    private void updateQueueTime(final int currentProgress) {
+        if (player == null || player.getPlayQueue() == null) {
+            queueControlBinding.queueTotalDuration.setVisibility(View.GONE);
+            return;
+        }
+
+        final PlayQueue playQueue = player.getPlayQueue();
+        final List<PlayQueueItem> streams = playQueue.getStreams();
+        final int currentIndex = playQueue.getIndex();
+
+        if (streams.isEmpty() || currentIndex < 0 || currentIndex >= streams.size()) {
+            queueControlBinding.queueTotalDuration.setVisibility(View.GONE);
+            return;
+        }
+
+        final long before = streams.subList(0, currentIndex).stream()
+                .mapToLong(PlayQueueItem::getDuration)
+                .sum();
+
+        final long total = streams.stream()
+                .mapToLong(PlayQueueItem::getDuration)
+                .sum();
+
+        final long queueProgress = before + currentProgress / 1000L;
+        final String totalDuration = Localization.getDurationString(total);
+
+        // Calculate the max width for the queue time to prevent resetting the artist marquee's
+        // scrolling position when the artist name is longer than the space available.
+        // Without a fixed width the scrolling position is reset every second when updating
+        // the text and thus the width of queueTotalDuration.
+
+        // Use the widest digit for the progress part while preserving its duration format.
+        final StringBuilder widestProgressDuration = new StringBuilder(totalDuration.length());
+        for (int i = 0; i < totalDuration.length(); i++) {
+            final char character = totalDuration.charAt(i);
+            widestProgressDuration.append(Character.isDigit(character) ? '8' : character);
+        }
+
+        final TextView queueDuration = queueControlBinding.queueTotalDuration;
+        final float progressWidth = queueDuration.getPaint()
+                .measureText(widestProgressDuration.toString());
+        final float totalWidth = queueDuration.getPaint().measureText(totalDuration);
+        final float separatorWidth = queueDuration.getPaint().measureText(" / ");
+
+        final int durationWidth = Math.round(progressWidth + separatorWidth + totalWidth);
+
+        if (queueDurationWidth != durationWidth) {
+            queueDuration.setWidth(durationWidth);
+            queueDurationWidth = durationWidth;
+        }
+
+        queueDuration.setText(
+                Localization.getDurationString(queueProgress) + " / " + totalDuration
+        );
+        queueDuration.setVisibility(View.VISIBLE);
+    }
+
     ////////////////////////////////////////////////////////////////////////////
     // Component On-Click Listener
     ////////////////////////////////////////////////////////////////////////////
@@ -419,7 +442,7 @@ public final class PlayQueueActivity extends AppCompatActivity
         }
 
         if (view.getId() == queueControlBinding.controlRepeat.getId()) {
-            player.onRepeatClicked();
+            player.cycleNextRepeatMode();
         } else if (view.getId() == queueControlBinding.controlBackward.getId()) {
             player.playPrevious();
         } else if (view.getId() == queueControlBinding.controlFastRewind.getId()) {
@@ -431,7 +454,7 @@ public final class PlayQueueActivity extends AppCompatActivity
         } else if (view.getId() == queueControlBinding.controlForward.getId()) {
             player.playNext();
         } else if (view.getId() == queueControlBinding.controlShuffle.getId()) {
-            player.onShuffleClicked();
+            player.toggleShuffleModeEnabled();
         } else if (view.getId() == queueControlBinding.metadata.getId()) {
             scrollToSelected();
         } else if (view.getId() == queueControlBinding.liveSync.getId()) {
@@ -456,6 +479,7 @@ public final class PlayQueueActivity extends AppCompatActivity
                                            final boolean playbackSkipSilence) {
         if (player != null) {
             player.setPlaybackParameters(playbackTempo, playbackPitch, playbackSkipSilence);
+            onPlaybackParameterChanged(player.getPlaybackParameters());
         }
     }
 
@@ -489,29 +513,18 @@ public final class PlayQueueActivity extends AppCompatActivity
     }
 
     ////////////////////////////////////////////////////////////////////////////
-    // Playlist append
-    ////////////////////////////////////////////////////////////////////////////
-
-    private void appendAllToPlaylist() {
-        if (player != null && player.getPlayQueue() != null) {
-            openPlaylistAppendDialog(player.getPlayQueue().getStreams());
-        }
-    }
-
-    private void openPlaylistAppendDialog(final List<PlayQueueItem> playlist) {
-        final PlaylistAppendDialog d = PlaylistAppendDialog.fromPlayQueueItems(playlist);
-
-        PlaylistAppendDialog.onPlaylistFound(getApplicationContext(),
-            () -> d.show(getSupportFragmentManager(), TAG),
-            () -> PlaylistCreationDialog.newInstance(d).show(getSupportFragmentManager(), TAG));
-    }
-
-    ////////////////////////////////////////////////////////////////////////////
     // Binding Service Listener
     ////////////////////////////////////////////////////////////////////////////
 
     @Override
-    public void onQueueUpdate(final PlayQueue queue) {
+    public void onQueueUpdate(@Nullable final PlayQueue queue) {
+        if (queue == null) {
+            queueControlBinding.playQueue.setAdapter(null);
+        } else {
+            final PlayQueueAdapter adapter = new PlayQueueAdapter(this, queue);
+            adapter.setSelectedListener(getOnSelectedListener());
+            queueControlBinding.playQueue.setAdapter(adapter);
+        }
     }
 
     @Override
@@ -520,7 +533,6 @@ public final class PlayQueueActivity extends AppCompatActivity
         onStateChanged(state);
         onPlayModeChanged(repeatMode, shuffled);
         onPlaybackParameterChanged(parameters);
-        onMaybePlaybackAdapterChanged();
         onMaybeMuteChanged();
     }
 
@@ -551,6 +563,7 @@ public final class PlayQueueActivity extends AppCompatActivity
                 queueControlBinding.currentTime.getLayoutParams();
         currentTimeParams.width = queueControlBinding.endTime.getWidth();
         queueControlBinding.currentTime.setLayoutParams(currentTimeParams);
+        updateQueueTime(currentProgress);
     }
 
     @Override
@@ -586,18 +599,19 @@ public final class PlayQueueActivity extends AppCompatActivity
     ////////////////////////////////////////////////////////////////////////////
 
     private void onStateChanged(final int state) {
+        final ImageButton playPauseButton = queueControlBinding.controlPlayPause;
         switch (state) {
             case Player.STATE_PAUSED:
-                queueControlBinding.controlPlayPause
-                        .setImageResource(R.drawable.ic_play_arrow);
+                playPauseButton.setImageResource(R.drawable.ic_play_arrow);
+                playPauseButton.setContentDescription(getString(R.string.play));
                 break;
             case Player.STATE_PLAYING:
-                queueControlBinding.controlPlayPause
-                        .setImageResource(R.drawable.ic_pause);
+                playPauseButton.setImageResource(R.drawable.ic_pause);
+                playPauseButton.setContentDescription(getString(R.string.pause));
                 break;
             case Player.STATE_COMPLETED:
-                queueControlBinding.controlPlayPause
-                        .setImageResource(R.drawable.ic_replay);
+                playPauseButton.setImageResource(R.drawable.ic_replay);
+                playPauseButton.setContentDescription(getString(R.string.replay));
                 break;
             default:
                 break;
@@ -622,16 +636,16 @@ public final class PlayQueueActivity extends AppCompatActivity
     private void onPlayModeChanged(final int repeatMode, final boolean shuffled) {
         switch (repeatMode) {
             case com.google.android.exoplayer2.Player.REPEAT_MODE_OFF:
-                queueControlBinding.controlRepeat
-                        .setImageResource(R.drawable.exo_controls_repeat_off);
+                queueControlBinding.controlRepeat.setImageResource(
+                        com.google.android.exoplayer2.ui.R.drawable.exo_controls_repeat_off);
                 break;
             case com.google.android.exoplayer2.Player.REPEAT_MODE_ONE:
-                queueControlBinding.controlRepeat
-                        .setImageResource(R.drawable.exo_controls_repeat_one);
+                queueControlBinding.controlRepeat.setImageResource(
+                        com.google.android.exoplayer2.ui.R.drawable.exo_controls_repeat_one);
                 break;
             case com.google.android.exoplayer2.Player.REPEAT_MODE_ALL:
-                queueControlBinding.controlRepeat
-                        .setImageResource(R.drawable.exo_controls_repeat_all);
+                queueControlBinding.controlRepeat.setImageResource(
+                        com.google.android.exoplayer2.ui.R.drawable.exo_controls_repeat_all);
                 break;
         }
 
@@ -639,23 +653,10 @@ public final class PlayQueueActivity extends AppCompatActivity
         queueControlBinding.controlShuffle.setImageAlpha(shuffleAlpha);
     }
 
-    private void onPlaybackParameterChanged(final PlaybackParameters parameters) {
-        if (parameters != null) {
-            if (menu != null && player != null) {
-                final MenuItem item = menu.findItem(R.id.action_playback_speed);
-                item.setTitle(formatSpeed(parameters.speed));
-            }
-        }
-    }
-
-    private void onMaybePlaybackAdapterChanged() {
-        if (player == null) {
-            return;
-        }
-        final PlayQueueAdapter maybeNewAdapter = player.getPlayQueueAdapter();
-        if (maybeNewAdapter != null
-                && queueControlBinding.playQueue.getAdapter() != maybeNewAdapter) {
-            queueControlBinding.playQueue.setAdapter(maybeNewAdapter);
+    private void onPlaybackParameterChanged(@Nullable final PlaybackParameters parameters) {
+        if (parameters != null && menu != null && player != null) {
+            final MenuItem item = menu.findItem(R.id.action_playback_speed);
+            item.setTitle(formatSpeed(parameters.speed));
         }
     }
 
@@ -669,8 +670,74 @@ public final class PlayQueueActivity extends AppCompatActivity
 
             //2) Icon change accordingly to current App Theme
             // using rootView.getContext() because getApplicationContext() didn't work
-            final Context context = queueControlBinding.getRoot().getContext();
             item.setIcon(player.isMuted() ? R.drawable.ic_volume_off : R.drawable.ic_volume_up);
         }
+    }
+
+    @Override
+    public void onAudioTrackUpdate() {
+        buildAudioTrackMenu();
+    }
+
+    private void buildAudioTrackMenu() {
+        if (menu == null) {
+            return;
+        }
+
+        final MenuItem audioTrackSelector = menu.findItem(R.id.action_audio_track);
+        final List<AudioStream> availableStreams =
+                Optional.ofNullable(player)
+                        .map(Player::getCurrentMetadata)
+                        .flatMap(MediaItemTag::getMaybeAudioTrack)
+                        .map(MediaItemTag.AudioTrack::getAudioStreams)
+                        .orElse(null);
+        final Optional<AudioStream> selectedAudioStream = Optional.ofNullable(player)
+                .flatMap(Player::getSelectedAudioStream);
+
+        if (availableStreams == null || availableStreams.size() < 2
+                || selectedAudioStream.isEmpty()) {
+            audioTrackSelector.setVisible(false);
+        } else {
+            final SubMenu audioTrackMenu = audioTrackSelector.getSubMenu();
+            audioTrackMenu.clear();
+
+            for (int i = 0; i < availableStreams.size(); i++) {
+                final AudioStream audioStream = availableStreams.get(i);
+                audioTrackMenu.add(MENU_ID_AUDIO_TRACK, i, Menu.NONE,
+                        Localization.audioTrackName(this, audioStream));
+            }
+
+            final AudioStream s = selectedAudioStream.get();
+            final String trackName = Localization.audioTrackName(this, s);
+            audioTrackSelector.setTitle(
+                    getString(R.string.play_queue_audio_track, trackName));
+
+            final String shortName = s.getAudioLocale() != null
+                    ? s.getAudioLocale().getLanguage() : trackName;
+            audioTrackSelector.setTitleCondensed(
+                    shortName.substring(0, Math.min(shortName.length(), 2)));
+            audioTrackSelector.setVisible(true);
+        }
+    }
+
+    /**
+     * Called when an item from the audio track selector is selected.
+     *
+     * @param itemId index of the selected item
+     */
+    private void onAudioTrackClick(final int itemId) {
+        if (player.getCurrentMetadata() == null) {
+            return;
+        }
+        player.getCurrentMetadata().getMaybeAudioTrack().ifPresent(audioTrack -> {
+            final List<AudioStream> availableStreams = audioTrack.getAudioStreams();
+            final int selectedStreamIndex = audioTrack.getSelectedAudioStreamIndex();
+            if (selectedStreamIndex == itemId || availableStreams.size() <= itemId) {
+                return;
+            }
+
+            final String newAudioTrack = availableStreams.get(itemId).getAudioTrackId();
+            player.setAudioTrack(newAudioTrack);
+        });
     }
 }

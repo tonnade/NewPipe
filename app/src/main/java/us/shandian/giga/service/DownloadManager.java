@@ -19,20 +19,22 @@ import us.shandian.giga.get.DownloadMission;
 import us.shandian.giga.get.FinishedMission;
 import us.shandian.giga.get.Mission;
 import us.shandian.giga.get.sqlite.FinishedMissionStore;
-import us.shandian.giga.io.StoredDirectoryHelper;
-import us.shandian.giga.io.StoredFileHelper;
+import org.schabi.newpipe.streams.io.StoredDirectoryHelper;
+import org.schabi.newpipe.streams.io.StoredFileHelper;
 import us.shandian.giga.util.Utility;
 
 import static org.schabi.newpipe.BuildConfig.DEBUG;
+import static us.shandian.giga.get.DownloadMission.ERROR_NOTHING;
+import static us.shandian.giga.get.DownloadMission.ERROR_PROGRESS_LOST;
 
 public class DownloadManager {
     private static final String TAG = DownloadManager.class.getSimpleName();
 
     enum NetworkState {Unavailable, Operating, MeteredOperating}
 
-    public final static int SPECIAL_NOTHING = 0;
-    public final static int SPECIAL_PENDING = 1;
-    public final static int SPECIAL_FINISHED = 2;
+    public static final int SPECIAL_NOTHING = 0;
+    public static final int SPECIAL_PENDING = 1;
+    public static final int SPECIAL_FINISHED = 2;
 
     public static final String TAG_AUDIO = "audio";
     public static final String TAG_VIDEO = "video";
@@ -106,7 +108,8 @@ public class DownloadManager {
     }
 
     /**
-     * Loads finished missions from the data source
+     * Loads finished missions from the data source and forgets finished missions whose file does
+     * not exist anymore.
      */
     private ArrayList<FinishedMission> loadFinishedMissions() {
         ArrayList<FinishedMission> finishedMissions = mFinishedMissionStore.loadFinishedMissions();
@@ -148,10 +151,29 @@ public class DownloadManager {
             if (sub.getName().equals(".tmp")) continue;
 
             DownloadMission mis = Utility.readFromFile(sub);
-            if (mis == null || mis.isFinished()) {
+            if (mis == null) {
                 //noinspection ResultOfMethodCallIgnored
                 sub.delete();
                 continue;
+            }
+
+            // DON'T delete missions that are truly finished - let them be moved to finished list
+            if (mis.isFinished()) {
+                // Move to finished missions instead of deleting
+                setFinished(mis);
+                //noinspection ResultOfMethodCallIgnored
+                sub.delete();
+                continue;
+            }
+
+            // DON'T delete missions with storage issues - try to recover them
+            if (mis.hasInvalidStorage() && mis.errCode != ERROR_PROGRESS_LOST) {
+                // Only delete if it's truly unrecoverable (not just progress lost)
+                if (mis.storage == null) {
+                    //noinspection ResultOfMethodCallIgnored
+                    sub.delete();
+                    continue;
+                }
             }
 
             mis.threads = new Thread[0];
@@ -162,16 +184,13 @@ public class DownloadManager {
                 exists = !mis.storage.isInvalid() && mis.storage.existsAsFile();
             } catch (Exception ex) {
                 Log.e(TAG, "Failed to load the file source of " + mis.storage.toString(), ex);
-                mis.storage.invalidate();
+                // Don't invalidate storage immediately - try to recover first
                 exists = false;
             }
 
             if (mis.isPsRunning()) {
                 if (mis.psAlgorithm.worksOnSameFile) {
                     // Incomplete post-processing results in a corrupted download file
-                    // because the selected algorithm works on the same file to save space.
-                    // the file will be deleted if the storage API
-                    // is Java IO (avoid showing the "Save as..." dialog)
                     if (exists && mis.storage.isDirect() && !mis.storage.delete())
                         Log.w(TAG, "Unable to delete incomplete download file: " + sub.getPath());
                 }
@@ -180,10 +199,11 @@ public class DownloadManager {
                 mis.errCode = DownloadMission.ERROR_POSTPROCESSING_STOPPED;
             } else if (!exists) {
                 tryRecover(mis);
-
-                // the progress is lost, reset mission state
-                if (mis.isInitialized())
-                    mis.resetState(true, true, DownloadMission.ERROR_PROGRESS_LOST);
+                // Keep the mission even if recovery fails - don't reset to ERROR_PROGRESS_LOST
+                // This allows user to see the failed download and potentially retry
+                if (mis.isInitialized() && mis.errCode == ERROR_NOTHING) {
+                    mis.resetState(true, true, ERROR_PROGRESS_LOST);
+                }
             }
 
             if (mis.psAlgorithm != null) {
@@ -264,7 +284,7 @@ public class DownloadManager {
         }
     }
 
-    public void deleteMission(Mission mission) {
+    public void deleteMission(Mission mission, boolean alsoDeleteFile) {
         synchronized (this) {
             if (mission instanceof DownloadMission) {
                 mMissionsPending.remove(mission);
@@ -273,7 +293,9 @@ public class DownloadManager {
                 mFinishedMissionStore.deleteMission(mission);
             }
 
-            mission.delete();
+            if (alsoDeleteFile) {
+                mission.delete();
+            }
         }
     }
 
@@ -331,14 +353,29 @@ public class DownloadManager {
     }
 
     /**
-     * Get a finished mission by its path
+     * Get the index into {@link #mMissionsFinished} of a finished mission by its path, return
+     * {@code -1} if there is no such mission. This function also checks if the matched mission's
+     * file exists, and, if it does not, the related mission is forgotten about (like in {@link
+     * #loadFinishedMissions()}) and {@code -1} is returned.
      *
-     * @param storage where the file possible is stored
+     * @param storage where the file would be stored
      * @return the mission index or -1 if no such mission exists
      */
     private int getFinishedMissionIndex(StoredFileHelper storage) {
         for (int i = 0; i < mMissionsFinished.size(); i++) {
             if (mMissionsFinished.get(i).storage.equals(storage)) {
+                // If the file does not exist the mission is not valid anymore. Also checking if
+                // length == 0 since the file picker may create an empty file before yielding it,
+                // but that does not mean the file really belonged to a previous mission.
+                if (!storage.existsAsFile() || storage.length() == 0) {
+                    if (DEBUG) {
+                        Log.d(TAG, "matched downloaded file removed: " + storage.getName());
+                    }
+
+                    mFinishedMissionStore.deleteMission(mMissionsFinished.get(i));
+                    mMissionsFinished.remove(i);
+                    return -1; // finished mission whose associated file was removed
+                }
                 return i;
             }
         }
@@ -430,7 +467,7 @@ public class DownloadManager {
                     continue;
 
                 resumeMission(mission);
-                if (mission.errCode != DownloadMission.ERROR_NOTHING) continue;
+                if (mission.errCode != ERROR_NOTHING) continue;
 
                 if (mPrefQueueLimit) return true;
                 flag = true;
@@ -492,6 +529,15 @@ public class DownloadManager {
         synchronized (this) {
             for (DownloadMission mission : mMissionsPending) mission.maxRetry = mPrefMaxRetry;
         }
+    }
+
+    public boolean canRecoverMission(DownloadMission mission) {
+        if (mission == null) return false;
+
+        // Can recover missions with progress lost or storage issues
+        return mission.errCode == ERROR_PROGRESS_LOST ||
+                mission.storage == null ||
+                !mission.storage.existsAsFile();
     }
 
     public MissionState checkForExistingMission(StoredFileHelper storage) {
@@ -566,8 +612,13 @@ public class DownloadManager {
                 ArrayList<Mission> finished = new ArrayList<>(mMissionsFinished);
                 List<Mission> remove = new ArrayList<>(hidden);
 
-                // hide missions (if required)
-                remove.removeIf(mission -> pending.remove(mission) || finished.remove(mission));
+                // Don't hide recoverable missions
+                remove.removeIf(mission -> {
+                    if (mission instanceof DownloadMission dm && canRecoverMission(dm)) {
+                        return false; // Don't remove recoverable missions
+                    }
+                    return pending.remove(mission) || finished.remove(mission);
+                });
 
                 int fakeTotal = pending.size();
                 if (fakeTotal > 0) fakeTotal++;

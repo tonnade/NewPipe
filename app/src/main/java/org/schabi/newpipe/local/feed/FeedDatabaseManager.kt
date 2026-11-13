@@ -7,18 +7,20 @@ import io.reactivex.rxjava3.core.Completable
 import io.reactivex.rxjava3.core.Flowable
 import io.reactivex.rxjava3.core.Maybe
 import io.reactivex.rxjava3.schedulers.Schedulers
+import java.time.LocalDate
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import org.schabi.newpipe.MainActivity.DEBUG
 import org.schabi.newpipe.NewPipeDatabase
 import org.schabi.newpipe.database.feed.model.FeedEntity
 import org.schabi.newpipe.database.feed.model.FeedGroupEntity
 import org.schabi.newpipe.database.feed.model.FeedLastUpdatedEntity
+import org.schabi.newpipe.database.stream.StreamWithState
 import org.schabi.newpipe.database.stream.model.StreamEntity
+import org.schabi.newpipe.database.subscription.NotificationMode
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import org.schabi.newpipe.extractor.stream.StreamType
 import org.schabi.newpipe.local.subscription.FeedGroupIcon
-import java.time.LocalDate
-import java.time.OffsetDateTime
-import java.time.ZoneOffset
 
 class FeedDatabaseManager(context: Context) {
     private val database = NewPipeDatabase.getInstance(context)
@@ -38,20 +40,26 @@ class FeedDatabaseManager(context: Context) {
 
     fun database() = database
 
-    fun asStreamItems(groupId: Long = FeedGroupEntity.GROUP_ALL_ID): Flowable<List<StreamInfoItem>> {
-        val streams = when (groupId) {
-            FeedGroupEntity.GROUP_ALL_ID -> feedTable.getAllStreams()
-            else -> feedTable.getAllStreamsFromGroup(groupId)
-        }
-
-        return streams.map {
-            val items = ArrayList<StreamInfoItem>(it.size)
-            it.mapTo(items) { stream -> stream.toStreamInfoItem() }
-            return@map items
-        }
+    fun getStreams(
+        groupId: Long,
+        includePlayedStreams: Boolean,
+        includePartiallyPlayedStreams: Boolean,
+        includeFutureStreams: Boolean
+    ): Maybe<List<StreamWithState>> {
+        return feedTable.getStreams(
+            groupId,
+            includePlayedStreams,
+            includePartiallyPlayedStreams,
+            if (includeFutureStreams) null else OffsetDateTime.now()
+        )
     }
 
     fun outdatedSubscriptions(outdatedThreshold: OffsetDateTime) = feedTable.getAllOutdated(outdatedThreshold)
+
+    fun outdatedSubscriptionsWithNotificationMode(
+        outdatedThreshold: OffsetDateTime,
+        @NotificationMode notificationMode: Int
+    ) = feedTable.getOutdatedWithNotificationMode(outdatedThreshold, notificationMode)
 
     fun notLoadedCount(groupId: Long = FeedGroupEntity.GROUP_ALL_ID): Flowable<Long> {
         return when (groupId) {
@@ -60,25 +68,30 @@ class FeedDatabaseManager(context: Context) {
         }
     }
 
-    fun outdatedSubscriptionsForGroup(groupId: Long = FeedGroupEntity.GROUP_ALL_ID, outdatedThreshold: OffsetDateTime) =
-        feedTable.getAllOutdatedForGroup(groupId, outdatedThreshold)
+    fun outdatedSubscriptionsForGroup(
+        groupId: Long = FeedGroupEntity.GROUP_ALL_ID,
+        outdatedThreshold: OffsetDateTime
+    ) = feedTable.getAllOutdatedForGroup(groupId, outdatedThreshold)
 
     fun markAsOutdated(subscriptionId: Long) = feedTable
         .setLastUpdatedForSubscription(FeedLastUpdatedEntity(subscriptionId, null))
+
+    fun doesStreamExist(stream: StreamInfoItem): Boolean {
+        return streamTable.exists(stream.serviceId, stream.url)
+    }
 
     fun upsertAll(
         subscriptionId: Long,
         items: List<StreamInfoItem>,
         oldestAllowedDate: OffsetDateTime = FEED_OLDEST_ALLOWED_DATE
     ) {
-        val itemsToInsert = ArrayList<StreamInfoItem>()
-        loop@ for (streamItem in items) {
-            val uploadDate = streamItem.uploadDate
+        val itemsToInsert = items.mapNotNull { stream ->
+            val uploadDate = stream.uploadDate
 
-            itemsToInsert += when {
-                uploadDate == null && streamItem.streamType == StreamType.LIVE_STREAM -> streamItem
-                uploadDate != null && uploadDate.offsetDateTime() >= oldestAllowedDate -> streamItem
-                else -> continue@loop
+            when {
+                uploadDate == null && stream.streamType == StreamType.LIVE_STREAM -> stream
+                uploadDate != null && uploadDate.offsetDateTime() >= oldestAllowedDate -> stream
+                else -> null
             }
         }
 
@@ -93,10 +106,7 @@ class FeedDatabaseManager(context: Context) {
         }
 
         feedTable.setLastUpdatedForSubscription(
-            FeedLastUpdatedEntity(
-                subscriptionId,
-                OffsetDateTime.now(ZoneOffset.UTC)
-            )
+            FeedLastUpdatedEntity(subscriptionId, OffsetDateTime.now(ZoneOffset.UTC))
         )
     }
 
@@ -108,7 +118,12 @@ class FeedDatabaseManager(context: Context) {
     fun clear() {
         feedTable.deleteAll()
         val deletedOrphans = streamTable.deleteOrphans()
-        if (DEBUG) Log.d(this::class.java.simpleName, "clear() → streamTable.deleteOrphans() → $deletedOrphans")
+        if (DEBUG) {
+            Log.d(
+                this::class.java.simpleName,
+                "clear() → streamTable.deleteOrphans() → $deletedOrphans"
+            )
+        }
     }
 
     // /////////////////////////////////////////////////////////////////////////
@@ -122,7 +137,8 @@ class FeedDatabaseManager(context: Context) {
     }
 
     fun updateSubscriptionsForGroup(groupId: Long, subscriptionIds: List<Long>): Completable {
-        return Completable.fromCallable { feedGroupTable.updateSubscriptionsForGroup(groupId, subscriptionIds) }
+        return Completable
+            .fromCallable { feedGroupTable.updateSubscriptionsForGroup(groupId, subscriptionIds) }
             .subscribeOn(Schedulers.io())
             .observeOn(AndroidSchedulers.mainThread())
     }
@@ -160,7 +176,7 @@ class FeedDatabaseManager(context: Context) {
             .observeOn(AndroidSchedulers.mainThread())
     }
 
-    fun oldestSubscriptionUpdate(groupId: Long): Flowable<List<OffsetDateTime>> {
+    fun oldestSubscriptionUpdate(groupId: Long): Flowable<List<OffsetDateTime?>> {
         return when (groupId) {
             FeedGroupEntity.GROUP_ALL_ID -> feedTable.oldestSubscriptionUpdateFromAll()
             else -> feedTable.oldestSubscriptionUpdate(groupId)

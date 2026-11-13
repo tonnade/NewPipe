@@ -3,12 +3,14 @@ package org.schabi.newpipe.player.playqueue;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import org.schabi.newpipe.extractor.Image;
 import org.schabi.newpipe.extractor.stream.StreamInfo;
 import org.schabi.newpipe.extractor.stream.StreamInfoItem;
 import org.schabi.newpipe.extractor.stream.StreamType;
 import org.schabi.newpipe.util.ExtractorHelper;
 
 import java.io.Serializable;
+import java.util.List;
 
 import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.schedulers.Schedulers;
@@ -24,9 +26,10 @@ public class PlayQueueItem implements Serializable {
     private final int serviceId;
     private final long duration;
     @NonNull
-    private final String thumbnailUrl;
+    private final List<Image> thumbnails;
     @NonNull
     private final String uploader;
+    private final String uploaderUrl;
     @NonNull
     private final StreamType streamType;
 
@@ -35,9 +38,10 @@ public class PlayQueueItem implements Serializable {
     private long recoveryPosition;
     private Throwable error;
 
-    PlayQueueItem(@NonNull final StreamInfo info) {
+    public PlayQueueItem(@NonNull final StreamInfo info) {
         this(info.getName(), info.getUrl(), info.getServiceId(), info.getDuration(),
-                info.getThumbnailUrl(), info.getUploaderName(), info.getStreamType());
+                info.getThumbnails(), info.getUploaderName(),
+                info.getUploaderUrl(), info.getStreamType());
 
         if (info.getStartPosition() > 0) {
             setRecoveryPosition(info.getStartPosition() * 1000);
@@ -46,36 +50,41 @@ public class PlayQueueItem implements Serializable {
 
     PlayQueueItem(@NonNull final StreamInfoItem item) {
         this(item.getName(), item.getUrl(), item.getServiceId(), item.getDuration(),
-                item.getThumbnailUrl(), item.getUploaderName(), item.getStreamType());
+                item.getThumbnails(), item.getUploaderName(),
+                item.getUploaderUrl(), item.getStreamType());
     }
 
+    @SuppressWarnings("ParameterNumber")
     private PlayQueueItem(@Nullable final String name, @Nullable final String url,
                           final int serviceId, final long duration,
-                          @Nullable final String thumbnailUrl, @Nullable final String uploader,
-                          @NonNull final StreamType streamType) {
+                          final List<Image> thumbnails, @Nullable final String uploader,
+                          final String uploaderUrl, @NonNull final StreamType streamType) {
         this.title = name != null ? name : EMPTY_STRING;
         this.url = url != null ? url : EMPTY_STRING;
         this.serviceId = serviceId;
         this.duration = duration;
-        this.thumbnailUrl = thumbnailUrl != null ? thumbnailUrl : EMPTY_STRING;
+        this.thumbnails = thumbnails;
         this.uploader = uploader != null ? uploader : EMPTY_STRING;
+        this.uploaderUrl = uploaderUrl;
         this.streamType = streamType;
 
         this.recoveryPosition = RECOVERY_UNSET;
     }
 
-    @Override
-    public boolean equals(final Object o) {
-        if (o instanceof PlayQueueItem) {
-            return url.equals(((PlayQueueItem) o).url);
-        } else {
+    /** Whether these two items should be treated as the same stream
+     * for the sake of keeping the same player running when e.g. jumping between timestamps.
+     *
+     * @param other the {@link PlayQueueItem} to compare against.
+     * @return whether the two items are the same so the stream can be re-used.
+     */
+    public boolean isSameItem(@Nullable final PlayQueueItem other) {
+        if (other == null) {
             return false;
         }
-    }
-
-    @Override
-    public int hashCode() {
-        return url.hashCode();
+        // We assume that the same service & URL uniquely determines
+        // that we can keep the same stream running.
+        return serviceId == other.serviceId
+                && url.equals(other.url);
     }
 
     @NonNull
@@ -97,13 +106,17 @@ public class PlayQueueItem implements Serializable {
     }
 
     @NonNull
-    public String getThumbnailUrl() {
-        return thumbnailUrl;
+    public List<Image> getThumbnails() {
+        return thumbnails;
     }
 
     @NonNull
     public String getUploader() {
         return uploader;
+    }
+
+    public String getUploaderUrl() {
+        return uploaderUrl;
     }
 
     @NonNull

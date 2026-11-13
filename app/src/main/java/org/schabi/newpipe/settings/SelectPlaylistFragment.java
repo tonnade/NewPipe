@@ -1,6 +1,7 @@
 package org.schabi.newpipe.settings;
 
-import android.app.Activity;
+import static org.schabi.newpipe.local.bookmark.MergedPlaylistManager.getMergedOrderedPlaylists;
+
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -14,9 +15,6 @@ import androidx.fragment.app.DialogFragment;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import com.nostra13.universalimageloader.core.DisplayImageOptions;
-import com.nostra13.universalimageloader.core.ImageLoader;
-
 import org.schabi.newpipe.NewPipeDatabase;
 import org.schabi.newpipe.R;
 import org.schabi.newpipe.database.AppDatabase;
@@ -24,27 +22,20 @@ import org.schabi.newpipe.database.LocalItem;
 import org.schabi.newpipe.database.playlist.PlaylistLocalItem;
 import org.schabi.newpipe.database.playlist.PlaylistMetadataEntry;
 import org.schabi.newpipe.database.playlist.model.PlaylistRemoteEntity;
-import org.schabi.newpipe.error.ErrorActivity;
 import org.schabi.newpipe.error.ErrorInfo;
+import org.schabi.newpipe.error.ErrorUtil;
 import org.schabi.newpipe.error.UserAction;
 import org.schabi.newpipe.local.playlist.LocalPlaylistManager;
 import org.schabi.newpipe.local.playlist.RemotePlaylistManager;
+import org.schabi.newpipe.util.image.CoilHelper;
 
 import java.util.List;
 import java.util.Vector;
 
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers;
-import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.disposables.Disposable;
 
 public class SelectPlaylistFragment extends DialogFragment {
-    /**
-     * This contains the base display options for images.
-     */
-    private static final DisplayImageOptions DISPLAY_IMAGE_OPTIONS
-            = new DisplayImageOptions.Builder().cacheInMemory(true).build();
-
-    private final ImageLoader imageLoader = ImageLoader.getInstance();
 
     private OnSelectedListener onSelectedListener = null;
 
@@ -100,8 +91,7 @@ public class SelectPlaylistFragment extends DialogFragment {
         final LocalPlaylistManager localPlaylistManager = new LocalPlaylistManager(database);
         final RemotePlaylistManager remotePlaylistManager = new RemotePlaylistManager(database);
 
-        disposable = Flowable.combineLatest(localPlaylistManager.getPlaylists(),
-                remotePlaylistManager.getPlaylists(), PlaylistLocalItem::merge)
+        disposable = getMergedOrderedPlaylists(localPlaylistManager, remotePlaylistManager)
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(this::displayPlaylists, this::onError);
     }
@@ -114,8 +104,7 @@ public class SelectPlaylistFragment extends DialogFragment {
     }
 
     protected void onError(final Throwable e) {
-        final Activity activity = requireActivity();
-        ErrorActivity.reportErrorInSnackbar(activity, new ErrorInfo(e,
+        ErrorUtil.showSnackbar(requireActivity(), new ErrorInfo(e,
                 UserAction.UI_ERROR, "Loading playlists"));
     }
 
@@ -129,12 +118,12 @@ public class SelectPlaylistFragment extends DialogFragment {
 
             if (selectedItem instanceof PlaylistMetadataEntry) {
                 final PlaylistMetadataEntry entry = ((PlaylistMetadataEntry) selectedItem);
-                onSelectedListener.onLocalPlaylistSelected(entry.uid, entry.name);
+                onSelectedListener.onLocalPlaylistSelected(entry.getUid(), entry.getOrderingName());
 
             } else if (selectedItem instanceof PlaylistRemoteEntity) {
                 final PlaylistRemoteEntity entry = ((PlaylistRemoteEntity) selectedItem);
                 onSelectedListener.onRemotePlaylistSelected(
-                        entry.getServiceId(), entry.getUrl(), entry.getName());
+                        entry.getServiceId(), entry.getUrl(), entry.getOrderingName());
             }
         }
         dismiss();
@@ -149,7 +138,7 @@ public class SelectPlaylistFragment extends DialogFragment {
         void onRemotePlaylistSelected(int serviceId, String url, String name);
     }
 
-    private class SelectPlaylistAdapter
+    private final class SelectPlaylistAdapter
             extends RecyclerView.Adapter<SelectPlaylistAdapter.SelectPlaylistItemHolder> {
         @NonNull
         @Override
@@ -165,21 +154,17 @@ public class SelectPlaylistFragment extends DialogFragment {
                                      final int position) {
             final PlaylistLocalItem selectedItem = playlists.get(position);
 
-            if (selectedItem instanceof PlaylistMetadataEntry) {
-                final PlaylistMetadataEntry entry = ((PlaylistMetadataEntry) selectedItem);
-
-                holder.titleView.setText(entry.name);
+            if (selectedItem instanceof PlaylistMetadataEntry entry) {
+                holder.titleView.setText(entry.getOrderingName());
                 holder.view.setOnClickListener(view -> clickedItem(position));
-                imageLoader.displayImage(entry.thumbnailUrl, holder.thumbnailView,
-                        DISPLAY_IMAGE_OPTIONS);
+                CoilHelper.INSTANCE.loadPlaylistThumbnail(holder.thumbnailView,
+                        entry.getThumbnailUrl());
 
-            } else if (selectedItem instanceof PlaylistRemoteEntity) {
-                final PlaylistRemoteEntity entry = ((PlaylistRemoteEntity) selectedItem);
-
-                holder.titleView.setText(entry.getName());
+            } else if (selectedItem instanceof PlaylistRemoteEntity entry) {
+                holder.titleView.setText(entry.getOrderingName());
                 holder.view.setOnClickListener(view -> clickedItem(position));
-                imageLoader.displayImage(entry.getThumbnailUrl(), holder.thumbnailView,
-                        DISPLAY_IMAGE_OPTIONS);
+                CoilHelper.INSTANCE.loadPlaylistThumbnail(holder.thumbnailView,
+                        entry.getThumbnailUrl());
             }
         }
 

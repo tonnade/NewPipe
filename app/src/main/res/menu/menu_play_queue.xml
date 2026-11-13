@@ -6,7 +6,7 @@
     <item
         android:id="@+id/action_append_playlist"
         android:icon="@drawable/ic_playlist_add"
-        android:title="@string/append_playlist"
+        android:title="@string/add_to_playlist"
         android:visible="true"
         app:showAsAction="ifRoom" />
 
@@ -17,6 +17,14 @@
         android:tooltipText="@string/playback_speed_control"
         android:visible="true"
         app:showAsAction="ifRoom" />
+
+    <item
+        android:id="@+id/action_audio_track"
+        android:tooltipText="@string/audio_track"
+        android:visible="false"
+        app:showAsAction="ifRoom">
+        <menu />
+    </item>
 
     <item
         android:id="@+id/action_mute"
